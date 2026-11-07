@@ -10,15 +10,16 @@ use livi_core_proto::state::{Screen, State};
 use livi_ui_model::dashboard::gauge::{self, Drawing, Scale, Spec, draw, groups, label_overflow};
 use livi_ui_model::dashboard::layout::{Center, pages, spec};
 use livi_ui_model::dashboard::nav::{Nav, nav};
-use livi_ui_model::dashboard::readings::{Readings, Turn, readings};
+use livi_ui_model::dashboard::readings::{Readings, Turn, energy_text, readings};
 use livi_ui_model::mask::{Mask, Stream, mask};
 use slint::{Color, ComponentHandle, Image, ModelRc, SharedString, VecModel};
 
 use crate::media::{Pixels, decode};
-use crate::{AppWindow, CapData, DashState, GaugeData, LabelData, MaskData, TrailData};
+use crate::{AppWindow, CapData, DashState, GaugeBand, GaugeData, LabelData, MaskData, TrailData};
 
 pub fn set_texts(d: &DashState, tr: impl Fn(&str, &str) -> String) {
     d.set_gear_label(tr("dashboard.gear", "GEAR").into());
+    d.set_charge_label(tr("dashboard.charge", "CHARGE").into());
     d.set_placeholder(tr("dashboard.noDashboard", "No dashboard on this screen").into());
 }
 
@@ -68,12 +69,20 @@ pub struct DashView {
 
 #[derive(Default)]
 pub struct DashReader {
-    speed_key: Option<(Scale, f64)>,
-    rpm_key: Option<(Scale, f64)>,
+    speed_key: Option<(Scale, usize)>,
+    rpm_key: Option<(Scale, usize)>,
     image: Option<String>,
 }
 
-fn gauge_view(scale: &Scale, mirror: bool, redline: f64) -> GaugeView {
+/// Which colour bands an arc is split into. The tones are named in `Signal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Zones {
+    Plain,
+    Redline,
+    Charge,
+}
+
+fn gauge_view(scale: &Scale, mirror: bool, zones: Zones, redline: f64) -> GaugeView {
     let spec = Spec {
         mirror,
         ..Spec::default()
@@ -84,13 +93,19 @@ fn gauge_view(scale: &Scale, mirror: bool, redline: f64) -> GaugeView {
     } else {
         f64::MAX
     };
+    let last = (drawing.arc_ticks - 1).max(1) as f64;
+    let groups = groups(
+        &drawing,
+        |i| band_tone(zones, redline_index, last, i),
+        band_dim(zones),
+    );
     let s = gauge::shadow(&drawing, mirror);
     let mut shadow = Pixels::new(s.size as u32, s.size as u32);
     for (px, a) in shadow.make_mut_slice().iter_mut().zip(&s.alpha) {
         *px = slint::Rgba8Pixel::new(255, 255, 255, *a);
     }
     GaugeView {
-        groups: groups(&drawing, (redline > 0.0).then_some(redline_index)),
+        groups,
         drawing,
         mirror,
         redline_index,
@@ -99,24 +114,68 @@ fn gauge_view(scale: &Scale, mirror: bool, redline: f64) -> GaugeView {
     }
 }
 
+/// How strong the short ticks of a coloured band are drawn.
+fn band_dim(zones: Zones) -> f64 {
+    match zones {
+        Zones::Charge => 0.85,
+        _ => 0.55,
+    }
+}
+
+/// Maps a tick to its band. Charge runs red below 20, dark orange below 40,
+/// yellow below 60 and green above, which matches where the pack gets critical.
+fn band_tone(zones: Zones, redline_index: f64, last: f64, i: usize) -> usize {
+    match zones {
+        Zones::Plain => 0,
+        Zones::Redline => (i as f64 >= redline_index) as usize,
+        Zones::Charge => match (i as f64 / last * 100.0) as i32 {
+            0..=19 => 1,
+            20..=39 => 2,
+            40..=59 => 3,
+            _ => 4,
+        },
+    }
+}
+
+/// The centre readout on a scooter shows the charge as whole percent, no decimals.
+fn charge_text(fuel: i32) -> String {
+    format!("{}%", fuel.clamp(0, 100))
+}
+
+/// The right-hand gauge is the rev counter, except on a scooter, where the pack's
+/// state of charge takes its place. A scooter has no redline, so none is drawn.
+fn right_gauge(r: &Readings) -> (&Scale, f64, f64) {
+    if r.scooter {
+        (&r.battery_scale, r.battery_level, 0.0)
+    } else {
+        (&r.rpm_scale, r.rpm, r.redline)
+    }
+}
+
 impl DashReader {
     pub fn read(&mut self, state: &State, screen: Screen, dark: bool) -> DashView {
         let r = readings(state, screen);
-        let speed_key = (r.speed_scale.clone(), 0.0);
+        let speed_key = (r.speed_scale.clone(), 0);
         let speed_gauge = (self.speed_key.as_ref() != Some(&speed_key)).then(|| {
             self.speed_key = Some(speed_key);
-            gauge_view(&r.speed_scale, false, 0.0)
+            gauge_view(&r.speed_scale, false, Zones::Plain, 0.0)
         });
-        let rpm_key = (r.rpm_scale.clone(), r.redline);
+        let (gauge_scale, _, gauge_redline) = right_gauge(&r);
+        let zones = if r.scooter {
+            Zones::Charge
+        } else {
+            Zones::Redline
+        };
+        let rpm_key = (gauge_scale.clone(), zones as usize);
         let rpm_gauge = (self.rpm_key.as_ref() != Some(&rpm_key)).then(|| {
             self.rpm_key = Some(rpm_key);
-            gauge_view(&r.rpm_scale, true, r.redline)
+            gauge_view(gauge_scale, true, zones, gauge_redline)
         });
         let base = Spec::default();
         let ring_shift = label_overflow(&base, &r.speed_scale, RING_W, RING_H, -LEFT_RING_LEFT)
             .max(label_overflow(
                 &base,
-                &r.rpm_scale,
+                gauge_scale,
                 RING_W,
                 RING_H,
                 RIGHT_RING_LEFT + RING_W - BASE_W,
@@ -156,10 +215,18 @@ fn gauge_data(v: &GaugeView) -> GaugeData {
     GaugeData {
         box_w: RING_W as f32,
         box_h: RING_H as f32,
-        minor: v.groups.minor.clone().into(),
-        major: v.groups.major.clone().into(),
-        red_minor: v.groups.red_minor.clone().into(),
-        red_major: v.groups.red_major.clone().into(),
+        bands: model(
+            v.groups
+                .bands
+                .iter()
+                .map(|b| GaugeBand {
+                    minor: b.minor.clone().into(),
+                    major: b.major.clone().into(),
+                    tone: b.tone as i32,
+                    minor_opacity: b.minor_opacity as f32,
+                })
+                .collect::<Vec<_>>(),
+        ),
         caps: model(
             v.groups
                 .caps
@@ -240,6 +307,7 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
     d.set_enabled(r.enabled);
     d.set_gauges(v.gauges);
     d.set_map(v.map);
+    d.set_dev_fake_map(r.dev_fake_map);
     d.set_mask(mask_data(v.mask));
     d.set_center(match v.center {
         Center::None => 0,
@@ -253,11 +321,17 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
         d.set_rpm_gauge(gauge_data(g));
     }
     d.set_speed_t((r.speed / r.speed_scale.max.max(1.0)).clamp(0.0, 1.0) as f32);
-    d.set_rpm_t((r.rpm / r.rpm_scale.max.max(1.0)).clamp(0.0, 1.0) as f32);
+    let (gauge_scale, gauge_value, _) = right_gauge(r);
+    d.set_rpm_t((gauge_value / gauge_scale.max.max(1.0)).clamp(0.0, 1.0) as f32);
     d.set_ring_shift(v.ring_shift as f32);
     d.set_speed_text(r.speed_text.clone().into());
     d.set_speed_label(r.speed_label.into());
     d.set_gear(r.gear.clone().into());
+    d.set_charge_text(charge_text(r.fuel).into());
+    // Without a measured level there is nothing to show but the label, which is
+    // what a scooter reads until its pack sensor reports.
+    let energy = r.battery_wh.map(energy_text).unwrap_or_default();
+    d.set_charge_energy(energy.into());
     d.set_turn_left(r.turn == Turn::Left);
     d.set_turn_right(r.turn == Turn::Right);
     d.set_hazards(r.hazards);
@@ -268,6 +342,7 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
     d.set_fuel(r.fuel);
     d.set_fuel_low(r.fuel_low);
     d.set_battery(r.battery);
+    d.set_scooter(r.scooter);
     d.set_oil_text(r.oil_text.clone().into());
     d.set_oil_ratio(r.oil_ratio as f32);
     d.set_oil_hot(r.oil_hot);

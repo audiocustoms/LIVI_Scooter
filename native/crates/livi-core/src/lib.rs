@@ -17,6 +17,8 @@ mod aa_telemetry;
 mod android_auto;
 #[cfg_attr(target_os = "android", path = "audio_devices/android.rs")]
 mod audio_devices;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod battery;
 mod blinker;
 mod camera;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -39,6 +41,7 @@ mod host_setup;
 mod http;
 mod hub;
 mod hwaddr;
+mod inputs;
 mod kiosk_unit;
 pub mod log_file;
 mod mfi;
@@ -178,6 +181,9 @@ pub async fn run(
     let (inside, inside_rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(telemetry::run(core.clone(), inside_rx, saved));
     tokio::spawn(gnss::run(core.clone(), inside.clone()));
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    tokio::spawn(battery::run(core.clone(), inside.clone()));
+    tokio::spawn(inputs::run(core.clone(), inside.clone()));
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     tokio::spawn(car_bridge::run(core.clone(), inside.clone()));
     #[cfg(any(target_os = "linux", target_os = "macos"))]

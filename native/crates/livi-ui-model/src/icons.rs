@@ -71,6 +71,8 @@ const SETTINGS: &[(&str, &str)] = &[
     ("speedScaleStep", "LinearScaleOutlined"),
     ("maxRpm", "SpeedOutlined"),
     ("redlineRpm", "WarningAmberOutlined"),
+    ("scooterBatteryVoltage", "BoltOutlined"),
+    ("scooterBatteryCapacity", "BatteryHorizontal"),
     ("speedUnit", "StraightenOutlined"),
     ("temperatureUnit", "ThermostatOutlined"),
     ("climate", "AcUnitOutlined"),
@@ -120,6 +122,7 @@ const SETTINGS: &[(&str, &str)] = &[
     ("debugLogging", "BugReportOutlined"),
     ("restart", "RestartAltOutlined"),
     ("poweroff", "PowerSettingsNewOutlined"),
+    ("devFakeMap", "MapOutlined"),
 ];
 
 pub fn settings_icon(key: &str) -> Option<&'static str> {

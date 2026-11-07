@@ -47,7 +47,7 @@ fn cp_fuels(car: Option<CarType>) -> &'static str {
     match car {
         Some(CarType::Gasoline | CarType::E85) => "Gasoline",
         Some(CarType::Diesel | CarType::DieselWinter | CarType::Biodiesel) => "Diesel",
-        Some(CarType::Electric) => "Electric",
+        Some(CarType::Electric | CarType::Scooter) => "Electric",
         Some(CarType::Cng) => "CNG",
         Some(CarType::HybridGasoline) => "Gasoline,Electric",
         Some(CarType::HybridDiesel) => "Diesel,Electric",
@@ -417,6 +417,7 @@ mod tests {
         assert_eq!(cp_fuels(Some(CarType::E85)), "Gasoline");
         assert_eq!(cp_fuels(Some(CarType::Biodiesel)), "Diesel");
         assert_eq!(cp_fuels(Some(CarType::Electric)), "Electric");
+        assert_eq!(cp_fuels(Some(CarType::Scooter)), "Electric");
         assert_eq!(cp_fuels(Some(CarType::Cng)), "CNG");
         assert_eq!(cp_fuels(Some(CarType::HybridGasoline)), "Gasoline,Electric");
         assert_eq!(cp_fuels(Some(CarType::HybridDiesel)), "Diesel,Electric");

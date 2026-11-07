@@ -168,6 +168,7 @@ fn fuel_types(car: Option<CarType>) -> Vec<i32> {
         }
         Some(CarType::HybridDiesel) => vec![CarType::Diesel as i32, CarType::Electric as i32],
         None | Some(CarType::Unknown) => vec![CarType::Gasoline as i32],
+        Some(CarType::Scooter) => vec![CarType::Electric as i32],
         Some(other) => vec![other as i32],
     }
 }
@@ -380,6 +381,7 @@ pub(crate) mod tests {
         assert_eq!(fuel_types(Some(CarType::HybridGasoline)), [1, 10]);
         assert_eq!(fuel_types(None), [1]);
         assert_eq!(fuel_types(Some(CarType::Electric)), [10]);
+        assert_eq!(fuel_types(Some(CarType::Scooter)), [10]);
     }
 
     #[test]

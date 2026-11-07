@@ -494,7 +494,7 @@ fn engines(cfg: &Config) -> Engines {
     );
     let electric = matches!(
         cfg.car_type,
-        Some(Electric | Hydrogen | HybridGasoline | HybridDiesel)
+        Some(Electric | Hydrogen | HybridGasoline | HybridDiesel | Scooter)
     );
     Engines {
         combustion: combustion.then(|| Rpm {
@@ -1043,6 +1043,14 @@ mod tests {
             }
         );
         cfg.car_type = Some(CarType::Electric);
+        assert_eq!(
+            engines(&cfg),
+            Engines {
+                combustion: None,
+                electric: true
+            }
+        );
+        cfg.car_type = Some(CarType::Scooter);
         assert_eq!(
             engines(&cfg),
             Engines {

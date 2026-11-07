@@ -5,12 +5,36 @@
 import { Theme } from "../theme.slint";
 import { Blink, DashState, Signal } from "state.slint";
 
-export component Lamp inherits Image {
+/// A telletale symbol on a plate.
+///
+/// The plate is always on screen, so the driver knows where a symbol sits before
+/// it ever lights up. An unlit symbol stays faintly visible; a blinking one dims
+/// to the same level instead of vanishing, which reads far calmer at speed than
+/// something appearing out of nothing twice a second.
+export component Lamp inherits Rectangle {
+    in property <image> source;
     in property <bool> active;
     in property <bool> blink;
     in property <color> tint;
-    colorize: root.tint;
-    opacity: root.active && (!root.blink || Blink.on) ? 1 : 0;
+    in property <color> plate;
+    in property <length> u: 1px;
+    in property <angle> rotation: 0deg;
+
+    /// How much of an unlit symbol remains visible.
+    property <float> unlit: 0.3;
+
+    background: root.plate;
+    border-radius: min(root.width, root.height) * 0.18;
+    Image {
+        x: root.width * 0.05;
+        y: root.height * 0.05;
+        width: root.width * 0.9;
+        height: root.height * 0.9;
+        source: root.source;
+        colorize: root.tint;
+        transform-rotation: root.rotation;
+        opacity: !root.active || (root.blink && !Blink.on) ? root.unlit : 1;
+    }
 }
 
 export component SegmentBar inherits HorizontalLayout {

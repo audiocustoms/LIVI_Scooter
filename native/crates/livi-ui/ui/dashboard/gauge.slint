@@ -55,38 +55,30 @@ export component Gauge inherits Rectangle {
         image-rendering: smooth;
     }
 
-    Path {
+    for b in g.bands: Path {
+        property <color> tint: b.tone == 1 ? Signal.band-red
+            : b.tone == 2 ? Signal.band-orange
+            : b.tone == 3 ? Signal.band-yellow
+            : Signal.band-green;
         width: parent.width;
         height: parent.height;
         viewbox-width: g.box-w;
         viewbox-height: g.box-h;
-        commands: g.minor;
-        fill: root.scale-color;
+        commands: b.minor;
+        fill: b.tone == 0 ? root.scale-color : tint;
+        opacity: b.minor-opacity;
     }
-    Path {
+    for b in g.bands: Path {
+        property <color> tint: b.tone == 1 ? Signal.band-red
+            : b.tone == 2 ? Signal.band-orange
+            : b.tone == 3 ? Signal.band-yellow
+            : Signal.band-green;
         width: parent.width;
         height: parent.height;
         viewbox-width: g.box-w;
         viewbox-height: g.box-h;
-        commands: g.major;
-        fill: root.major-color;
-    }
-    if g.red-minor != "": Path {
-        width: parent.width;
-        height: parent.height;
-        viewbox-width: g.box-w;
-        viewbox-height: g.box-h;
-        commands: g.red-minor;
-        fill: Signal.warn;
-        opacity: 0.55;
-    }
-    if g.red-major != "": Path {
-        width: parent.width;
-        height: parent.height;
-        viewbox-width: g.box-w;
-        viewbox-height: g.box-h;
-        commands: g.red-major;
-        fill: Signal.warn;
+        commands: b.major;
+        fill: b.tone == 0 ? root.major-color : tint;
     }
     for c in g.caps: Path {
         width: parent.width;
@@ -147,10 +139,12 @@ export component Readout inherits Rectangle {
     in property <length> u;
     in property <bool> backdrop;
     in property <color> backdrop-color;
+    /// Room for a fourth character, which a charge readout like `100%` needs.
+    in property <bool> wide: false;
 
     pure function snap(l: length) -> length { return round(l / 1phx) * 1phx; }
 
-    property <length> value-w: snap(3 * 0.56 * 96 * u);
+    property <length> value-w: snap((root.wide ? 4 : 3) * 0.56 * 96 * u);
     property <length> pad-x: snap(18 * u);
     property <length> pad-y: snap(10 * u);
     property <length> gap: snap(2 * u);
@@ -177,10 +171,10 @@ export component Readout inherits Rectangle {
             y: root.pad-y + root.big-h + root.gap;
             width: root.value-w;
             text: root.caption;
-            font-size: root.snap(10 * root.u);
+            font-size: root.snap(24 * root.u);
             font-weight: 500;
-            letter-spacing: 1.5 * root.u;
-            color: Theme.text-secondary.with-alpha(0.5);
+            letter-spacing: 1 * root.u;
+            color: Theme.text-secondary.with-alpha(0.73);
             horizontal-alignment: root.to-end ? right : left;
         }
     }

@@ -12,6 +12,8 @@ export component ProjectionPage inherits Rectangle {
     in property <int> stream-width: 1280;
     in property <int> stream-height: 720;
     in property <bool> streaming;
+    /// Development stand-in for the projection stream.
+    in property <bool> dev-fake-map;
     in property <MaskData> mask;
     in property <image> idle-icon;
     in property <bool> video-shown;
@@ -24,7 +26,14 @@ export component ProjectionPage inherits Rectangle {
     callback video-seek(float);
     callback video-close();
 
-    background: root.streaming ? transparent : Theme.background;
+    background: root.streaming && !root.dev-fake-map ? transparent : Theme.background;
+
+    if root.streaming && root.dev-fake-map: Image {
+        width: root.width;
+        height: root.height;
+        source: @image-url("dev/maps_fake.jpg");
+        image-fit: cover;
+    }
 
     Rectangle {
         width: min(root.width, root.height * root.stream-width / root.stream-height);

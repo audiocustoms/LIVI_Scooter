@@ -61,6 +61,11 @@ pub fn schema() -> Node {
                 "poweroff",
                 CustomPage::PowerOff,
             ),
+            Node::toggle(
+                Label::new("settings.devFakeMap", "DEV: Fake Map Background"),
+                "devFakeMap",
+            )
+            .icon("devFakeMap"),
         ],
     )
     .icon("system")

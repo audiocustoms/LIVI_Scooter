@@ -15,6 +15,11 @@ pub const WIFI_PASSWORD_MAX: usize = 63;
 pub struct Config {
     pub debug_logging: bool,
 
+    /// Development only: draw a stand-in map where the projection stream would
+    /// be, so the dashboard can be worked on without a phone connected.
+    #[serde(default)]
+    pub dev_fake_map: bool,
+
     pub wireless_aa_enabled: bool,
     pub wireless_cp_enabled: bool,
 
@@ -96,6 +101,41 @@ pub struct Config {
     pub speed_scale_step: u32,
     pub max_rpm: u32,
     pub redline_rpm: u32,
+    /// Nominal scooter pack voltage in volts. The full and empty limits follow
+    /// from it, see `scooter_pack`.
+    #[serde(default = "default_scooter_voltage")]
+    pub scooter_battery_voltage: u16,
+    /// Pack capacity in Ah, the scale a coulomb counter is read against. Not a
+    /// whole number: a test pack can be 4.6 Ah.
+    #[serde(default = "default_scooter_capacity")]
+    pub scooter_battery_capacity_ah: f64,
+    /// Resistance of the shunt the monitor measures across, in milliohms.
+    #[serde(default = "default_scooter_shunt")]
+    pub scooter_shunt_milliohm: f64,
+    /// Current the shunt is rated for, which sets the monitor's scale.
+    #[serde(default = "default_scooter_shunt_current")]
+    pub scooter_shunt_max_current_a: f64,
+    /// Corrections for the bus voltage reading. A board with a divider in front
+    /// of VBUS, or a clone that scales differently, needs a factor to report the
+    /// voltage that is actually at the pin.
+    #[serde(default = "default_one")]
+    pub scooter_vbus_scale: f64,
+    /// GPIO inputs that report the indicators and the high beam. The original
+    /// control unit drives 12 V, so these expect a level shifter down to 3.3 V.
+    /// -1 disables a line.
+    #[serde(default = "default_indicator_left")]
+    pub scooter_indicator_left_gpio: i32,
+    #[serde(default = "default_indicator_right")]
+    pub scooter_indicator_right_gpio: i32,
+    #[serde(default = "default_high_beam")]
+    pub scooter_high_beam_gpio: i32,
+    /// Wired and reserved for a later use, read but not published.
+    #[serde(default = "default_indicator_spare")]
+    pub scooter_indicator_spare_gpio: i32,
+    /// Read the pack from an INA228 over I²C. Stays off until the chip is wired,
+    /// so a scooter without one is unaffected.
+    #[serde(default)]
+    pub scooter_battery_sensor: bool,
     pub speed_unit: SpeedUnit,
     pub temperature_unit: TemperatureUnit,
 
@@ -279,13 +319,14 @@ pub enum CarType {
     Electric = 10,
     Hydrogen = 11,
     Other = 12,
+    Scooter = 13,
     HybridGasoline = 101,
     HybridDiesel = 102,
 }
 
 impl CarType {
     pub fn from_name(name: &str) -> Option<Self> {
-        const ALL: [(&str, CarType); 13] = [
+        const ALL: [(&str, CarType); 14] = [
             ("Gasoline", CarType::Gasoline),
             ("DieselWinter", CarType::DieselWinter),
             ("Diesel", CarType::Diesel),
@@ -297,12 +338,78 @@ impl CarType {
             ("Electric", CarType::Electric),
             ("Hydrogen", CarType::Hydrogen),
             ("Other", CarType::Other),
+            ("Scooter", CarType::Scooter),
             ("HybridGasoline", CarType::HybridGasoline),
             ("HybridDiesel", CarType::HybridDiesel),
         ];
         ALL.iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
             .map(|(_, t)| *t)
+    }
+}
+
+/// Nominal pack voltages a scooter can run, with the full and empty limits the
+/// battery reading is taken against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScooterPack {
+    /// A 3S2P pack used on the bench to bring up the monitor. Kept apart from the
+    /// 36 V and up packs because it is far smaller.
+    V12,
+    V36,
+    V48,
+    #[default]
+    V60,
+    V72,
+}
+
+impl ScooterPack {
+    pub const ALL: [ScooterPack; 5] = [
+        ScooterPack::V12,
+        ScooterPack::V36,
+        ScooterPack::V48,
+        ScooterPack::V60,
+        ScooterPack::V72,
+    ];
+
+    pub fn from_volts(volts: u16) -> Option<Self> {
+        match volts {
+            12 => Some(Self::V12),
+            36 => Some(Self::V36),
+            48 => Some(Self::V48),
+            60 => Some(Self::V60),
+            72 => Some(Self::V72),
+            _ => None,
+        }
+    }
+
+    pub fn volts(self) -> u16 {
+        match self {
+            Self::V12 => 12,
+            Self::V36 => 36,
+            Self::V48 => 48,
+            Self::V60 => 60,
+            Self::V72 => 72,
+        }
+    }
+
+    /// Pack voltage at full charge and at the empty cut-off.
+    pub fn limits(self) -> (f64, f64) {
+        match self {
+            // 3S Li-ion: 3 cells at 4.2 V and at the 3.0 V cut-off.
+            Self::V12 => (12.6, 9.0),
+            Self::V36 => (42.0, 30.0),
+            Self::V48 => (54.6, 39.0),
+            Self::V60 => (67.2, 48.0),
+            Self::V72 => (84.0, 60.0),
+        }
+    }
+
+    pub fn full_v(self) -> f64 {
+        self.limits().0
+    }
+
+    pub fn empty_v(self) -> f64 {
+        self.limits().1
     }
 }
 
@@ -438,6 +545,7 @@ pub fn defaults() -> Config {
     let empty = || Some(String::new());
     Config {
         debug_logging: false,
+        dev_fake_map: false,
         wireless_aa_enabled: false,
         wireless_cp_enabled: false,
         wifi_password: "12345678".into(),
@@ -507,6 +615,16 @@ pub fn defaults() -> Config {
         speed_scale_step: 40,
         max_rpm: 5000,
         redline_rpm: 4500,
+        scooter_battery_voltage: default_scooter_voltage(),
+        scooter_battery_capacity_ah: default_scooter_capacity(),
+        scooter_shunt_milliohm: default_scooter_shunt(),
+        scooter_shunt_max_current_a: default_scooter_shunt_current(),
+        scooter_vbus_scale: default_one(),
+        scooter_indicator_left_gpio: default_indicator_left(),
+        scooter_indicator_right_gpio: default_indicator_right(),
+        scooter_high_beam_gpio: default_high_beam(),
+        scooter_indicator_spare_gpio: default_indicator_spare(),
+        scooter_battery_sensor: false,
         speed_unit: SpeedUnit::Kmh,
         temperature_unit: TemperatureUnit::Celsius,
         sampling_frequency: 1,
@@ -579,6 +697,65 @@ pub fn defaults() -> Config {
     }
 }
 
+/// The pack the scooter runs on. The limits follow from the nominal voltage, so
+/// only that one value is stored.
+fn default_scooter_voltage() -> u16 {
+    ScooterPack::default().volts()
+}
+
+fn default_scooter_capacity() -> f64 {
+    30.0
+}
+
+/// An FL-2 shunt marked 100 A / 75 mV, which is 0.75 mΩ.
+fn default_scooter_shunt() -> f64 {
+    0.75
+}
+
+fn default_scooter_shunt_current() -> f64 {
+    100.0
+}
+
+fn default_one() -> f64 {
+    1.0
+}
+
+// Header pins 29, 31, 33 and 35: four neighbours on one side of the 40 pin
+// header, clear of I²C on 2/3 and the UART on 14/15.
+fn default_indicator_left() -> i32 {
+    5
+}
+
+fn default_indicator_right() -> i32 {
+    6
+}
+
+fn default_high_beam() -> i32 {
+    13
+}
+
+fn default_indicator_spare() -> i32 {
+    19
+}
+
+impl Config {
+    pub fn scooter_pack(&self) -> ScooterPack {
+        ScooterPack::from_volts(self.scooter_battery_voltage).unwrap_or_default()
+    }
+
+    /// Energy the shunt turns into 75 mV at its rated current, in millivolts.
+    /// An FL-2 marking says both, and they have to agree.
+    pub fn scooter_shunt_full_scale_mv(&self) -> f64 {
+        self.scooter_shunt_milliohm * self.scooter_shunt_max_current_a
+    }
+
+    /// Pack energy in Wh, which is what a full charge holds. A coulomb counter
+    /// needs it to turn accumulated charge into a percentage.
+    pub fn scooter_pack_wh(&self) -> f64 {
+        f64::from(self.scooter_battery_voltage) * self.scooter_battery_capacity_ah
+    }
+}
+
 fn default_bindings() -> KeyBindings {
     let key = |code: &str| code.to_string();
     KeyBindings {
@@ -633,11 +810,67 @@ mod tests {
             Some(CarType::HybridDiesel)
         );
         assert_eq!(CarType::from_name("LPG"), Some(CarType::Lpg));
+        assert_eq!(CarType::from_name("scooter"), Some(CarType::Scooter));
         assert_eq!(CarType::from_name("Unknown"), None);
         assert_eq!(
             EvConnectorType::from_name("combo2"),
             Some(EvConnectorType::Combo2)
         );
         assert_eq!(EvConnectorType::from_name("Type 2"), None);
+    }
+
+    #[test]
+    fn a_scooter_pack_knows_its_voltage_limits() {
+        assert_eq!(
+            ScooterPack::from_volts(60),
+            Some(ScooterPack::V60),
+            "the nominal voltage selects the pack"
+        );
+        assert_eq!(ScooterPack::from_volts(50), None);
+        assert_eq!(
+            ScooterPack::default().volts(),
+            60,
+            "sixty volts is the default"
+        );
+        assert_eq!(ScooterPack::V12.limits(), (12.6, 9.0));
+        assert_eq!(ScooterPack::V36.limits(), (42.0, 30.0));
+        assert_eq!(ScooterPack::V48.limits(), (54.6, 39.0));
+        assert_eq!(ScooterPack::V60.limits(), (67.2, 48.0));
+        assert_eq!(ScooterPack::V72.limits(), (84.0, 60.0));
+        for p in ScooterPack::ALL {
+            assert!(p.full_v() > p.empty_v(), "{p:?} must charge above empty");
+        }
+    }
+
+    #[test]
+    fn the_config_reads_the_pack_from_the_voltage() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.scooter_pack(), ScooterPack::V60);
+        cfg.scooter_battery_voltage = 72;
+        assert_eq!(cfg.scooter_pack(), ScooterPack::V72);
+        cfg.scooter_battery_voltage = 50;
+        assert_eq!(cfg.scooter_pack(), ScooterPack::V60, "unknown falls back");
+    }
+
+    #[test]
+    fn the_pack_energy_follows_voltage_and_capacity() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            cfg.scooter_battery_capacity_ah, 30.0,
+            "thirty Ah is the default"
+        );
+        assert_eq!(cfg.scooter_pack_wh(), 60.0 * 30.0);
+        cfg.scooter_battery_capacity_ah = 50.0;
+        cfg.scooter_battery_voltage = 72;
+        assert_eq!(cfg.scooter_pack_wh(), 72.0 * 50.0);
+    }
+
+    #[test]
+    fn the_default_shunt_is_the_fl2_on_the_bench() {
+        let cfg = Config::default();
+        assert_eq!(cfg.scooter_shunt_milliohm, 0.75);
+        assert_eq!(cfg.scooter_shunt_max_current_a, 100.0);
+        // Its marking says 75 mV at 100 A, and the two have to match.
+        assert!((cfg.scooter_shunt_full_scale_mv() - 75.0).abs() < 1e-9);
     }
 }

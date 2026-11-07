@@ -72,6 +72,7 @@ livi-runtime = { path = "crates/livi-runtime" }
 livi-screen-stream = { path = "crates/livi-screen-stream" }
 livi-session-io = { path = "crates/livi-session-io" }
 livi-i18n = { path = "crates/livi-i18n" }
+livi-ina228 = { path = "crates/livi-ina228" }
 livi-ui = { path = "crates/livi-ui" }
 livi-ui-model = { path = "crates/livi-ui-model" }
 livi-video = { path = "crates/livi-video" }

@@ -23,6 +23,8 @@ export component Dashboard inherits Rectangle {
     property <color> plate: Theme.dark ? #00000099 : #ffffffc7;
     property <bool> blinking: DashState.turn-left || DashState.turn-right || DashState.hazards;
     property <length> swipe-from;
+    /// A finger touched the dashboard, whatever the window layer above saw.
+    callback woke;
 
     background: DashState.enabled && DashState.map ? transparent : Theme.background;
 
@@ -30,6 +32,17 @@ export component Dashboard inherits Rectangle {
         interval: 500ms;
         running: root.blinking;
         triggered => { Blink.on = !Blink.on; }
+    }
+
+    // The stand-in map sits where the projection stream would be, so the mask
+    // below still blanks whatever falls outside the app's view area. It fills
+    // the display and crops the overflow instead of leaving bars, because a
+    // 16:9 image on a 5:3 panel would otherwise float in the middle.
+    if DashState.enabled && DashState.map && DashState.dev-fake-map: Image {
+        width: root.width;
+        height: root.height;
+        source: @image-url("dev/maps_fake.jpg");
+        image-fit: cover;
     }
 
     if DashState.enabled && DashState.map: ViewAreaMask {
@@ -40,6 +53,7 @@ export component Dashboard inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
                 root.swipe-from = self.mouse-x;
+                root.woke();
             } else if (e.kind == PointerEventKind.up) {
                 let dx = self.mouse-x - root.swipe-from;
                 if (abs(dx) >= 40px && DashState.page-count > 1) {
@@ -98,8 +112,9 @@ export component Dashboard inherits Rectangle {
             width: 200 * root.u;
             height: 130 * root.u;
             u: root.u;
-            value: DashState.gear;
-            caption: DashState.gear-label;
+            value: DashState.scooter ? DashState.charge-text : DashState.gear;
+            caption: DashState.scooter ? (DashState.charge-energy != "" ? DashState.charge-energy : DashState.charge-label) : DashState.gear-label;
+            wide: DashState.scooter;
             to-end: false;
             backdrop: DashState.map;
             backdrop-color: root.plate;
@@ -108,67 +123,88 @@ export component Dashboard inherits Rectangle {
         Lamp {
             x: root.left + 70 * root.u;
             y: root.top + 1 * root.u;
-            width: 51 * root.u;
-            height: 51 * root.u;
+            width: 100 * root.u;
+            height: 100 * root.u;
+            u: root.u;
+            plate: root.plate;
             source: @image-url("icons/PlayArrow.svg");
-            transform-rotation: 180deg;
+            rotation: 180deg;
             tint: Signal.green;
             active: DashState.turn-left || DashState.hazards;
             blink: true;
         }
         Lamp {
-            x: root.left + (1210 - 51) * root.u;
+            x: root.left + (1210 - 100) * root.u;
             y: root.top + 1 * root.u;
-            width: 51 * root.u;
-            height: 51 * root.u;
+            width: 100 * root.u;
+            height: 100 * root.u;
+            u: root.u;
+            plate: root.plate;
             source: @image-url("icons/PlayArrow.svg");
             tint: Signal.green;
             active: DashState.turn-right || DashState.hazards;
             blink: true;
         }
-        HorizontalLayout {
-            x: root.left + (640 - 2 * 30 - 1.5 * 21) * root.u;
-            y: root.top + 12 * root.u;
-            height: 30 * root.u;
-            spacing: 21 * root.u;
+        row := HorizontalLayout {
+            property <float> lamp: 100;
+            property <float> gap: 24;
+            x: root.left + (640 - 2 * self.lamp - 1.5 * self.gap) * root.u;
+            y: root.top + 1 * root.u;
+            height: self.lamp * root.u;
+            spacing: self.gap * root.u;
             Lamp {
-                width: 30 * root.u;
+                width: row.lamp * root.u;
+                u: root.u;
+                plate: root.plate;
                 source: @image-url("icons/TelltaleLowBeam.svg");
                 tint: Signal.green;
                 active: DashState.lights;
             }
             Lamp {
-                width: 30 * root.u;
+                width: row.lamp * root.u;
+                u: root.u;
+                plate: root.plate;
                 source: @image-url("icons/TelltaleHighBeam.svg");
                 tint: Signal.blue;
                 active: DashState.high-beam;
             }
             Lamp {
-                width: 30 * root.u;
+                width: row.lamp * root.u;
+                u: root.u;
+                plate: root.plate;
                 source: @image-url("icons/TelltaleHazard.svg");
                 tint: Signal.red;
                 active: DashState.hazards;
                 blink: true;
             }
             Rectangle {
-                width: 30 * root.u;
-                opacity: DashState.parking-brake ? 1 : 0;
+                width: row.lamp * root.u;
+                background: root.plate;
+                border-radius: min(self.width, self.height) * 0.18;
                 Image {
-                    width: parent.width;
-                    height: parent.height;
+                    x: parent.width * 0.05;
+                    y: parent.height * 0.05;
+                    width: parent.width * 0.9;
+                    height: parent.height * 0.9;
                     source: @image-url("icons/TelltaleParkingRing.svg");
                     colorize: Signal.red;
+                    opacity: DashState.parking-brake ? 1 : 0.3;
                 }
                 Text {
+                    width: parent.width;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
                     text: "P";
-                    font-size: 9.5 / 24 * 30 * root.u;
+                    font-size: 9.5 / 24 * row.lamp * root.u;
                     font-weight: 700;
                     color: Signal.red;
+                    opacity: DashState.parking-brake ? 1 : 0.3;
                 }
             }
         }
         if DashState.ambient != "": Text {
-            x: root.left + (1210 - 51 - 42) * root.u - self.width;
+            x: root.left + (1210 - 100 - 24) * root.u - self.width;
             y: root.top + 27 * root.u - self.height / 2;
             text: DashState.ambient;
             font-size: 20 * root.u;
@@ -177,7 +213,7 @@ export component Dashboard inherits Rectangle {
             color: Theme.text;
         }
 
-        Level {
+        if !DashState.scooter: Level {
             x: root.left + 140 * root.u;
             y: root.top + 660 * root.u;
             height: 24 * root.u;
@@ -187,7 +223,7 @@ export component Dashboard inherits Rectangle {
             value: DashState.oil-text;
             warn: DashState.oil-hot;
         }
-        Level {
+        if !DashState.scooter: Level {
             x: root.left + 1140 * root.u - self.width;
             y: root.top + 660 * root.u;
             height: 24 * root.u;

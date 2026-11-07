@@ -68,6 +68,21 @@ pub fn deco_hit_test(state: &LiviState, lx: f64, ly: f64) -> (Option<usize>, Dec
     (None, DecoHit::None)
 }
 
+/// UI windows in the order input tries them.
+///
+/// A secondary window that mirrors a dashboard can land on the same output as the
+/// main one, and when it does it covers it completely. Which of the two is
+/// registered first depends on the order the UI process maps them in, which is a
+/// race at startup: after a reboot the mirror came first and swallowed every
+/// touch, so the side menu of the main window could never be woken. The main UI
+/// is the one on screen 0, so it takes input first; a window on another output is
+/// unaffected, because only the surfaces at its own position can be hit there.
+fn ui_hit_order(ui: impl Iterator<Item = (usize, usize)>) -> Vec<usize> {
+    let mut out: Vec<(bool, usize)> = ui.map(|(idx, screen)| (screen != 0, idx)).collect();
+    out.sort_by_key(|(secondary, _)| *secondary);
+    out.into_iter().map(|(_, idx)| idx).collect()
+}
+
 pub fn surface_at(state: &LiviState, lx: f64, ly: f64) -> Option<(WlSurface, Point<f64, Logical>)> {
     let pt = Point::<f64, Logical>::from((lx, ly));
     let mut ordered: Vec<usize> = Vec::new();
@@ -76,11 +91,14 @@ pub fn surface_at(state: &LiviState, lx: f64, ly: f64) -> Option<(WlSurface, Poi
             ordered.push(i);
         }
     }
-    for (i, t) in state.toplevels.iter().enumerate() {
-        if t.kind == Kind::Ui {
-            ordered.push(i);
-        }
-    }
+    ordered.extend(ui_hit_order(
+        state
+            .toplevels
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == Kind::Ui)
+            .map(|(i, t)| (i, t.screen_idx)),
+    ));
     for &i in state.video_order.iter().rev() {
         ordered.push(i);
     }
@@ -374,4 +392,29 @@ pub fn key(
         );
     }
     let _: Option<ModifiersState> = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ui_hit_order;
+
+    #[test]
+    fn the_main_ui_takes_input_before_a_mirror_registered_first() {
+        // The order a hardware reboot produced: the dashboard mirror came first.
+        assert_eq!(ui_hit_order([(0, 1), (1, 0)].into_iter()), vec![1, 0]);
+    }
+
+    #[test]
+    fn the_order_is_unchanged_when_it_is_already_right() {
+        assert_eq!(ui_hit_order([(0, 0), (1, 1)].into_iter()), vec![0, 1]);
+    }
+
+    #[test]
+    fn several_windows_on_other_outputs_keep_their_order() {
+        assert_eq!(
+            ui_hit_order([(3, 2), (0, 1), (1, 0)].into_iter()),
+            vec![1, 3, 0],
+            "main first, the rest in registration order"
+        );
+    }
 }

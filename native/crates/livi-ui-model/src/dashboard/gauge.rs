@@ -288,16 +288,27 @@ impl Bar {
     }
 }
 
+/// One colour band of the arc. `tone` only names the band; the UI picks the
+/// colour, so the model stays free of theme values.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Groups {
+pub struct Band {
     pub minor: String,
     pub major: String,
-    pub red_minor: String,
-    pub red_major: String,
+    pub tone: usize,
+    /// Opacity of the short ticks, so a band can sit behind the long ones.
+    pub minor_opacity: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Groups {
+    pub bands: Vec<Band>,
     pub caps: Vec<(String, f64)>,
 }
 
-pub fn groups(d: &Drawing, redline_index: Option<f64>) -> Groups {
+/// Splits the arc into colour bands. `tone` maps an arc index, counting from the
+/// low end of the scale, to the band it belongs to; the tones come from the UI.
+/// `dim` is the opacity of the short ticks in a coloured band.
+pub fn groups(d: &Drawing, tone: impl Fn(usize) -> usize, dim: f64) -> Groups {
     let mut g = Groups::default();
     let join = |acc: &mut String, b: &Bar| {
         if !acc.is_empty() {
@@ -318,17 +329,28 @@ pub fn groups(d: &Drawing, redline_index: Option<f64>) -> Groups {
                 }
             }
             (Some(i), mark) => {
-                let red = redline_index.is_some_and(|r| i as f64 >= r);
-                let target = match (red, mark == Mark::Major) {
-                    (false, false) => &mut g.minor,
-                    (false, true) => &mut g.major,
-                    (true, false) => &mut g.red_minor,
-                    (true, true) => &mut g.red_major,
+                let t = tone(i);
+                let slot = match g.bands.iter().position(|x| x.tone == t) {
+                    Some(slot) => slot,
+                    None => {
+                        g.bands.push(Band {
+                            tone: t,
+                            minor_opacity: if t == 0 { 1.0 } else { dim },
+                            ..Band::default()
+                        });
+                        g.bands.len() - 1
+                    }
+                };
+                let target = if mark == Mark::Major {
+                    &mut g.bands[slot].major
+                } else {
+                    &mut g.bands[slot].minor
                 };
                 join(target, b);
             }
         }
     }
+    g.bands.sort_by_key(|b| b.tone);
     g
 }
 
@@ -438,11 +460,45 @@ mod tests {
     fn the_red_zone_gets_its_own_paths() {
         let s = scale(8000.0, 1000.0, 20, |v| format!("{v}"));
         let d = draw(&Spec::default(), &s, 470.0, 600.0);
-        let none = groups(&d, None);
-        assert!(none.red_minor.is_empty() && none.red_major.is_empty());
-        let red = groups(&d, Some((s.ticks - 1) as f64 * 0.9));
-        assert!(!red.red_minor.is_empty() && !red.red_major.is_empty());
+        let none = groups(&d, |_| 0, 1.0);
+        assert_eq!(none.bands.len(), 1);
+        assert!(!none.bands[0].major.is_empty());
+        let cut = (d.arc_ticks - 1) as f64 * 0.9;
+        let red = groups(&d, |i| (i as f64 >= cut) as usize, 0.55);
+        assert_eq!(red.bands.len(), 2);
+        assert_eq!(red.bands[0].tone, 0);
+        assert_eq!(red.bands[1].tone, 1);
+        assert!(!red.bands[1].minor.is_empty() && !red.bands[1].major.is_empty());
         assert_eq!(red.caps.len(), 3);
+    }
+
+    #[test]
+    fn bands_split_the_arc_by_index() {
+        let s = scale(100.0, 20.0, 5, |v| format!("{v}"));
+        let d = draw(&Spec::default(), &s, 470.0, 600.0);
+        let last = (d.arc_ticks - 1).max(1) as f64;
+        let charge = groups(
+            &d,
+            |i| match (i as f64 / last * 100.0) as i32 {
+                0..=19 => 1,
+                20..=39 => 2,
+                40..=59 => 3,
+                _ => 4,
+            },
+            0.85,
+        );
+        assert_eq!(
+            charge.bands.iter().map(|b| b.tone).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        assert!(charge.bands.iter().all(|b| !b.major.is_empty()));
+        // Green covers 60 to 100, so it has to own the widest stretch of the arc.
+        let widest = charge
+            .bands
+            .iter()
+            .max_by_key(|b| b.major.matches("M ").count() + b.minor.matches("M ").count())
+            .unwrap();
+        assert_eq!(widest.tone, 4);
     }
 
     #[test]

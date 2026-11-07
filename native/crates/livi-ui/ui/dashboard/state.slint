@@ -20,13 +20,17 @@ export struct LabelData {
     text: string,
 }
 
+export struct GaugeBand {
+    minor: string,
+    major: string,
+    tone: int,
+    minor-opacity: float,
+}
+
 export struct GaugeData {
     box-w: float,
     box-h: float,
-    minor: string,
-    major: string,
-    red-minor: string,
-    red-major: string,
+    bands: [GaugeBand],
     caps: [CapData],
     trail: [TrailData],
     labels: [LabelData],
@@ -50,6 +54,8 @@ export global DashState {
     in property <bool> enabled;
     in property <bool> gauges: true;
     in property <bool> map;
+    /// Development stand-in for the projection stream behind the dashboard.
+    in property <bool> dev-fake-map;
     in property <MaskData> mask;
     in property <int> center;
     in property <GaugeData> speed-gauge;
@@ -61,6 +67,9 @@ export global DashState {
     in property <string> speed-label: "KPH";
     in property <string> gear: "P";
     in property <string> gear-label: "GEAR";
+    in property <string> charge-text: "0%";
+    in property <string> charge-label: "CHARGE";
+    in property <string> charge-energy: "";
     in property <bool> turn-left;
     in property <bool> turn-right;
     in property <bool> hazards;
@@ -71,6 +80,7 @@ export global DashState {
     in property <int> fuel;
     in property <bool> fuel-low;
     in property <bool> battery;
+    in property <bool> scooter;
     in property <string> oil-text: "0°";
     in property <float> oil-ratio;
     in property <bool> oil-hot;
@@ -108,4 +118,8 @@ export global Signal {
     out property <color> red: #ff3b30;
     out property <color> warn: #f44336;
     out property <color> amber: #ffa726;
+    out property <color> band-red: #f44336;
+    out property <color> band-orange: #c2610a;
+    out property <color> band-yellow: #e8c500;
+    out property <color> band-green: #19e04b;
 }

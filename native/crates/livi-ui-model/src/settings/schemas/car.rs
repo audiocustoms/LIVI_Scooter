@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional terms: see NOTICE
 
+use livi_core_proto::config::ScooterPack;
+
 use crate::settings::node::{
     CustomPage, Label, Node, OptionValue, Shown, UnitSource, choice, number_choice, text_choice,
 };
 
-const CAR_TYPES: [(&str, &str, f64); 13] = [
+const CAR_TYPES: [(&str, &str, f64); 14] = [
     ("Gasoline", "settings.carTypeGasoline", 1.0),
     ("Diesel", "settings.carTypeDiesel", 4.0),
     ("Electric", "settings.carTypeElectric", 10.0),
+    ("Scooter", "settings.carTypeScooter", 13.0),
     ("HybridGasoline", "settings.carTypeHybridGasoline", 101.0),
     ("HybridDiesel", "settings.carTypeHybridDiesel", 102.0),
     ("E85", "settings.carTypeE85", 6.0),
@@ -24,6 +27,28 @@ const CAR_TYPES: [(&str, &str, f64); 13] = [
 
 const HAND_LHD: f64 = 0.0;
 const HAND_RHD: f64 = 1.0;
+
+/// The packs a scooter can run on, with the label shown for each.
+const SCOOTER_PACKS: [(ScooterPack, &str, &str); 5] = [
+    (ScooterPack::V12, "settings.scooterVoltage12", "12V"),
+    (ScooterPack::V36, "settings.scooterVoltage36", "36V"),
+    (ScooterPack::V48, "settings.scooterVoltage48", "48V"),
+    (ScooterPack::V60, "settings.scooterVoltage60", "60V"),
+    (ScooterPack::V72, "settings.scooterVoltage72", "72V"),
+];
+
+/// Capacities packs are sold in, plus the bench pack used to bring up the
+/// monitor. Fixed steps on purpose: a pack without a BMS has no exact figure to
+/// type in anyway.
+const SCOOTER_CAPACITIES: [(f64, &str, &str); 7] = [
+    (4.6, "settings.scooterCapacity4p6", "4.6 Ah"),
+    (10.0, "settings.scooterCapacity10", "10 Ah"),
+    (15.0, "settings.scooterCapacity15", "15 Ah"),
+    (20.0, "settings.scooterCapacity20", "20 Ah"),
+    (30.0, "settings.scooterCapacity30", "30 Ah"),
+    (40.0, "settings.scooterCapacity40", "40 Ah"),
+    (50.0, "settings.scooterCapacity50", "50 Ah"),
+];
 
 fn carplay() -> Node {
     Node::route(
@@ -114,6 +139,42 @@ pub fn schema() -> Node {
                 .display_value()
                 .shown(Shown::Suffix(" rpm"))
                 .page(Label::new("settings.redlineRpm", "Redline")),
+            Node::select(
+                Label::new("settings.scooterBatteryVoltage", "Scooter Battery Voltage"),
+                "scooterBatteryVoltage",
+                SCOOTER_PACKS
+                    .iter()
+                    .map(|&(pack, key, text)| {
+                        choice(
+                            Label::new(key, text),
+                            OptionValue::Number(f64::from(pack.volts())),
+                        )
+                    })
+                    .collect(),
+            )
+            .icon("scooterBatteryVoltage")
+            .display_value()
+            .page(Label::new(
+                "settings.scooterBatteryVoltage",
+                "Scooter Battery Voltage",
+            )),
+            Node::select(
+                Label::new(
+                    "settings.scooterBatteryCapacity",
+                    "Scooter Battery Capacity",
+                ),
+                "scooterBatteryCapacityAh",
+                SCOOTER_CAPACITIES
+                    .iter()
+                    .map(|&(ah, key, text)| choice(Label::new(key, text), OptionValue::Number(ah)))
+                    .collect(),
+            )
+            .icon("scooterBatteryCapacity")
+            .display_value()
+            .page(Label::new(
+                "settings.scooterBatteryCapacity",
+                "Scooter Battery Capacity",
+            )),
             Node::select(
                 Label::new("settings.speedUnit", "Speed Unit"),
                 "speedUnit",

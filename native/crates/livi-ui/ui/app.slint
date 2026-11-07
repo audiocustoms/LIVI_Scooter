@@ -62,7 +62,7 @@ export component AppWindow inherits Window {
     callback spectrum-changed(bool);
 
     property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming;
-    property <bool> nav-asleep;
+    in-out property <bool> nav-asleep;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -114,6 +114,7 @@ export component AppWindow inherits Window {
         y: root.content-top;
         width: root.content-width;
         height: root.content-height;
+        woke => { root.wake-nav(); }
     }
 
     HorizontalLayout {
@@ -139,6 +140,7 @@ export component AppWindow inherits Window {
                 width: parent.width;
                 height: parent.height;
                 streaming: root.phone == PhoneState.streaming;
+                dev-fake-map: DashState.dev-fake-map;
                 idle-icon: root.projection-icon;
                 stream-width: root.stream-width;
                 stream-height: root.stream-height;

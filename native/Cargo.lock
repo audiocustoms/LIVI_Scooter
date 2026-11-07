@@ -4038,6 +4038,7 @@ dependencies = [
  "livi-fm",
  "livi-host-proto",
  "livi-i18n",
+ "livi-ina228",
  "livi-link-host",
  "livi-media",
  "livi-net",
@@ -4191,6 +4192,13 @@ name = "livi-i18n"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "livi-ina228"
+version = "10.5.0"
+dependencies = [
+ "libc 1.0.0-alpha.5",
 ]
 
 [[package]]

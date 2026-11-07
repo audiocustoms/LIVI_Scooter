@@ -40,6 +40,17 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// The energy a scooter's pack holds, from the voltage and capacity set in the
+/// car settings. A scooter reports no vehicle telemetry of its own, so without
+/// this the capacity row would stay empty.
+fn scooter_capacity_kwh(cfg: &Config) -> Option<f64> {
+    if cfg.car_type != Some(CarType::Scooter) {
+        return None;
+    }
+    let kwh = cfg.scooter_pack_wh() / 1000.0;
+    (kwh > 0.0).then_some(kwh)
+}
+
 pub fn merge(snap: &mut Snapshot, patch: &Value) -> Option<Snapshot> {
     let patch = patch.as_object().filter(|p| !p.is_empty())?;
     let mut changed = Snapshot::new();
@@ -146,6 +157,11 @@ impl Telemetry {
         }
         if let Some(vehicle) = &saved.vehicle {
             patch.extend(vehicle.clone());
+        }
+        if let Some(kwh) = scooter_capacity_kwh(cfg)
+            && !patch.contains_key("batteryCapacityKwh")
+        {
+            patch.insert("batteryCapacityKwh".into(), kwh.into());
         }
         if cfg.hu_volume.is_finite() {
             let level = cfg.hu_volume.clamp(0.0, 1.0);
@@ -660,6 +676,33 @@ mod tests {
         );
         t.push(&json!({ "evMaxDcPowerKw": 150.5 })).await;
         assert_eq!(core.hub.config().ev_max_dc_power_kw, Some(150.5));
+    }
+
+    #[tokio::test]
+    async fn a_scooter_publishes_the_energy_its_settings_describe() {
+        let dir = TempDir::new();
+        let mut cfg = defaults();
+        cfg.car_type = Some(CarType::Scooter);
+        cfg.scooter_battery_voltage = 60;
+        cfg.scooter_battery_capacity_ah = 30.0;
+        let core = core(&dir, cfg);
+        let (_, io, _) = socket(core.hub.watch());
+        let t = Telemetry::new(core.clone(), io, &Saved::default());
+
+        let kwh = t.snap["batteryCapacityKwh"].as_f64().unwrap();
+        assert!((kwh - 1.8).abs() < 1e-9, "60 V at 30 Ah is 1.8 kWh");
+    }
+
+    #[test]
+    fn only_a_scooter_gets_a_pack_energy_from_the_settings() {
+        let mut cfg = Config::default();
+        cfg.car_type = Some(CarType::Scooter);
+        assert_eq!(scooter_capacity_kwh(&cfg), Some(1.8));
+        cfg.car_type = Some(CarType::Electric);
+        assert_eq!(scooter_capacity_kwh(&cfg), None, "a car reports its own");
+        cfg.car_type = Some(CarType::Scooter);
+        cfg.scooter_battery_capacity_ah = 0.0;
+        assert_eq!(scooter_capacity_kwh(&cfg), None, "no capacity, no energy");
     }
 
     #[tokio::test]

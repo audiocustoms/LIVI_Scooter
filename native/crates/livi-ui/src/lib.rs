@@ -467,6 +467,7 @@ pub fn run(
     settings_ui::wire(&ui, &client, &lang);
     #[cfg(not(target_os = "android"))]
     keys_ui::wire(&ui, &client);
+    keys_ui::input_probe("ui started", &ui);
     #[cfg(target_os = "android")]
     touch_ui::wire(&ui, &client);
     video_ui::wire(&ui, &client);

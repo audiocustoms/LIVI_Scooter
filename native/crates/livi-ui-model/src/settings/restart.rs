@@ -55,6 +55,8 @@ const NEEDS_RESTART: &[&str] = &[
     "samplingFrequency",
     "hand",
     "carType",
+    "scooterBatteryVoltage",
+    "scooterBatteryCapacityAh",
     "carplayIcon120",
     "carplayIcon180",
     "carplayIcon256",

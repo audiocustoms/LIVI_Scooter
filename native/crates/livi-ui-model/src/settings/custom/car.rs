@@ -20,7 +20,7 @@ pub fn readings(state: &Value, t: &Strings) -> Vec<Row> {
     let capacity = finite(&tel["batteryCapacityKwh"]);
     let level = finite(&tel["batteryLevelKwh"]);
     let electric = serde_json::from_value::<CarType>(config["carType"].clone())
-        .is_ok_and(|c| c == CarType::Electric);
+        .is_ok_and(|c| matches!(c, CarType::Electric | CarType::Scooter));
     let charge = match (level, capacity) {
         (Some(l), Some(c)) if c != 0.0 => Some(l / c * 100.0),
         _ if electric => finite(&tel["fuelPct"]),

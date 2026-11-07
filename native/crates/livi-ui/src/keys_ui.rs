@@ -474,8 +474,44 @@ pub fn touched(ui: &AppWindow) {
     slint::Timer::single_shot(std::time::Duration::ZERO, move || {
         if let Some(ui) = later.upgrade() {
             ui.invoke_wake_nav();
+            input_probe("after wake-nav", &ui);
         }
     });
+}
+
+/// Appends one line per event to the file `LIVI_UI_INPUT_LOG` names, and does
+/// nothing without it.
+///
+/// Neither the core's nor the UI's own stdout reaches the journal on a kiosk, so
+/// a display whose touch has gone quiet leaves nothing to read. This is the one
+/// place that sees every pointer event, the nav state it should change, and
+/// whether that state actually changed.
+pub fn input_probe(what: &str, ui: &AppWindow) {
+    use std::io::Write;
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    let Some(path) = std::env::var_os("LIVI_UI_INPUT_LOG") else {
+        return;
+    };
+    static START: OnceLock<Instant> = OnceLock::new();
+    let since = START.get_or_init(Instant::now).elapsed().as_millis();
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let size = ui.window().size();
+    let _ = writeln!(
+        f,
+        "{since:>7}ms {what:<20} asleep={} telemetry={} streaming={} {}x{}",
+        ui.get_nav_asleep(),
+        ui.get_page() == Page::Telemetry,
+        ui.get_phone() == PhoneState::Streaming,
+        size.width,
+        size.height,
+    );
 }
 
 #[cfg(not(target_os = "android"))]
@@ -516,6 +552,17 @@ pub fn wire(ui: &AppWindow, client: &Client) {
                 ..
             }
             | winit::event::WindowEvent::Touch(_) => {
+                input_probe(
+                    match event {
+                        winit::event::WindowEvent::Touch(t) => match t.phase {
+                            winit::event::TouchPhase::Started => "winit touch started",
+                            winit::event::TouchPhase::Moved => "winit touch moved",
+                            _ => "winit touch ended",
+                        },
+                        _ => "winit mouse pressed",
+                    },
+                    &ui,
+                );
                 touched(&ui);
                 if let winit::event::WindowEvent::Touch(touch) = event
                     && crate::touch_ui::winit(&ui, &client, touch)
