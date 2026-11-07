@@ -54,9 +54,10 @@ fn corrected(cfg: &Config, reading: &Reading) -> Reading {
 /// is testable without a chip.
 ///
 /// `counted` says whether the counter has a reference from a full pack. Without
-/// one the accumulated charge means nothing, so only the voltage and current are
-/// published and the dashboard keeps showing its label instead of a made-up
-/// percentage.
+/// one the accumulated charge means nothing, so the percentage is estimated from
+/// the pack voltage between the pack's empty and full limits instead. That is
+/// coarse, and sags under load, but it is real; the dashboard would otherwise
+/// show 0 % or the last run's value restored from disk.
 pub fn patch(cfg: &Config, reading: &Reading, counted: bool) -> Option<Value> {
     if cfg.car_type != Some(CarType::Scooter) {
         return None;
@@ -69,13 +70,20 @@ pub fn patch(cfg: &Config, reading: &Reading, counted: bool) -> Option<Value> {
         "packVoltage": (reading.bus_v * 100.0).round() / 100.0,
         "packCurrent": (reading.current_a * 100.0).round() / 100.0,
     });
-    if !counted {
-        return Some(out);
-    }
-    let capacity = cfg.scooter_battery_capacity_ah;
-    let soc = reading.soc_percent(capacity)?;
-    let remaining_wh = reading.remaining_wh(capacity, f64::from(cfg.scooter_battery_voltage))?;
     let map = out.as_object_mut()?;
+    let capacity = cfg.scooter_battery_capacity_ah;
+    let nominal = f64::from(cfg.scooter_battery_voltage);
+    let (soc, remaining_wh) = if counted {
+        (
+            reading.soc_percent(capacity)?,
+            reading.remaining_wh(capacity, nominal)?,
+        )
+    } else {
+        let pack = cfg.scooter_pack();
+        let span = pack.full_v() - pack.empty_v();
+        let soc = ((reading.bus_v - pack.empty_v()) / span * 100.0).clamp(0.0, 100.0);
+        (soc, soc / 100.0 * nominal * capacity)
+    };
     map.insert("fuelPct".into(), json!((soc * 10.0).round() / 10.0));
     map.insert(
         "batteryLevelKwh".into(),
@@ -91,11 +99,6 @@ pub fn at_full(cfg: &Config, reading: &Reading) -> bool {
     let reading = corrected(cfg, reading);
     FullDetect::default().reached(reading.bus_v, reading.current_a, pack.full_v())
 }
-
-/// Accumulated charge that counts as evidence the counter has been running.
-/// A chip whose pack has never been seen full reports zero, which is exactly the
-/// indistinguishable-from-full case; anything above a coulomb is real movement.
-const REFERENCE_C: f64 = 1.0;
 
 /// What one sample means for the task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,12 +146,12 @@ impl Tracker {
     /// True when the accumulated charge may be read as what has been taken out
     /// since full.
     ///
-    /// The counter is only ever zeroed on a full pack, so a non-zero accumulator
-    /// is itself evidence that the reference exists. That keeps the percentage
-    /// alive across a restart of this task, while the pack that was never full
-    /// stays unclaimed.
-    pub fn counted(&self, reading: &Reading) -> bool {
-        self.seen_full || reading.charge_c.abs() >= REFERENCE_C
+    /// The counter is only ever zeroed on a full pack. A non-zero accumulator is
+    /// no evidence of that: offset and noise fill it on a pack that was never
+    /// full, which then reads close to 100 %. So only a full pack seen by this
+    /// task counts.
+    pub fn counted(&self) -> bool {
+        self.seen_full
     }
 }
 
@@ -218,7 +221,7 @@ mod linux {
                 }
                 Step::Publish => reading,
             };
-            let counted = tracker.counted(&reading);
+            let counted = tracker.counted();
             if let Some(patch) = patch(&cfg, &reading, counted) {
                 let _ = inside.send(patch);
             }
@@ -275,15 +278,17 @@ mod tests {
     }
 
     #[test]
-    fn without_a_reference_nothing_claims_a_percentage() {
+    fn without_a_reference_the_percentage_comes_from_the_voltage() {
         let cfg = scooter();
-        // A pack that was never seen full: the counter is still at its reset
-        // value, so a percentage would be meaningless.
-        let p = patch(&cfg, &reading(0.0, 12.4, 0.0), false).unwrap();
-        assert!(p.get("fuelPct").is_none(), "no charge without a reference");
-        assert!(p.get("batteryLevelKwh").is_none());
-        assert_eq!(p["packVoltage"], json!(12.4));
+        // 60 V pack: empty 48 V, full 67.2 V. A zero counter proves nothing, so
+        // the voltage decides; 57.6 V is half way.
+        let p = patch(&cfg, &reading(0.0, 57.6, 0.0), false).unwrap();
+        assert_eq!(p["fuelPct"], json!(50.0));
+        assert_eq!(p["batteryLevelKwh"], json!(0.9));
+        assert_eq!(p["packVoltage"], json!(57.6));
         assert_eq!(p["packCurrent"], json!(0.0));
+        let low = patch(&cfg, &reading(0.0, 40.0, 0.0), false).unwrap();
+        assert_eq!(low["fuelPct"], json!(0.0), "below empty clamps");
     }
 
     #[test]
@@ -356,14 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn a_pack_that_was_never_full_claims_no_percentage() {
+    fn a_pack_that_was_never_full_is_not_counted() {
         let cfg = scooter();
         let mut t = Tracker::new();
         let r = reading(0.0, 62.0, 2.0);
         assert_eq!(t.observe(&cfg, &r), Step::Publish);
-        assert!(!t.counted(&r), "a zero counter is not a reference");
-        let p = patch(&cfg, &r, t.counted(&r)).unwrap();
-        assert!(p.get("fuelPct").is_none());
+        assert!(!t.counted(), "a zero counter is not a reference");
+        let p = patch(&cfg, &r, t.counted()).unwrap();
+        assert_eq!(p["fuelPct"], json!(72.9), "estimated from 62 V");
     }
 
     #[test]
@@ -376,20 +381,21 @@ mod tests {
         assert_eq!(t.observe(&cfg, &reading(0.0, 67.2, 0.0)), Step::Reset);
         let discharged = reading(5_400.0, 66.0, 2.0);
         assert_eq!(t.observe(&cfg, &discharged), Step::Publish);
-        assert!(t.counted(&discharged), "still counted after leaving full");
-        let p = patch(&cfg, &discharged, t.counted(&discharged)).unwrap();
+        assert!(t.counted(), "still counted after leaving full");
+        let p = patch(&cfg, &discharged, t.counted()).unwrap();
         assert_eq!(p["fuelPct"], json!(95.0), "5 % of 30 Ah taken out");
     }
 
     #[test]
-    fn a_counter_left_running_before_a_restart_still_counts() {
-        // The chip keeps accumulating across a restart, so a non-zero counter is
-        // its own reference even though this run never saw the pack full.
+    fn a_nonzero_counter_is_not_a_reference_without_a_full_pack() {
+        // Offset and noise make the chip accumulate charge on a pack that was
+        // never full, so a non-zero counter proves nothing and would show a
+        // percentage near 100 for an empty pack.
         let cfg = scooter();
         let mut t = Tracker::new();
         let r = reading(20_000.0, 64.0, 3.0);
         assert_eq!(t.observe(&cfg, &r), Step::Publish);
-        assert!(t.counted(&r));
+        assert!(!t.counted());
     }
 
     #[test]
@@ -401,13 +407,6 @@ mod tests {
         assert_eq!(t.observe(&cfg, &full), Step::Publish, "already reset");
         assert_eq!(t.observe(&cfg, &reading(0.0, 60.0, 4.0)), Step::Publish);
         assert_eq!(t.observe(&cfg, &full), Step::Reset, "charged again");
-    }
-
-    #[test]
-    fn a_coulomb_of_noise_is_not_a_reference() {
-        let t = Tracker::new();
-        assert!(!t.counted(&reading(0.4, 64.0, 0.0)));
-        assert!(!t.counted(&reading(-0.4, 64.0, 0.0)));
     }
 
     #[test]

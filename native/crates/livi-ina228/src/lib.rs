@@ -43,8 +43,8 @@ const MANUFACTURER_TI: u16 = 0x5449;
 /// The INA228 device id, in the high bits of its identification register.
 const DEVICE_INA228: u16 = 0x2280;
 
-/// Bus voltage resolution, 312.5 µV per bit.
-const VBUS_LSB_V: f64 = 312.5e-6;
+/// Bus voltage resolution, 195.3125 µV per bit.
+const VBUS_LSB_V: f64 = 195.3125e-6;
 /// Shunt voltage resolution with the wide input range, 312.5 nV per bit.
 const VSHUNT_LSB_V: f64 = 312.5e-9;
 /// Shunt voltage resolution with the narrow input range, 78.125 nV per bit.
@@ -232,7 +232,7 @@ impl<B: Bus> Monitor<B> {
             power_w: f64::from(raw_power) * self.shunt.power_lsb(),
             energy_j: raw_energy as f64 * self.shunt.energy_lsb(),
             charge_c: raw_charge as f64 * self.shunt.charge_lsb(),
-            die_c: f64::from(raw_temp >> 4) * DIETEMP_LSB_C,
+            die_c: f64::from(raw_temp) * DIETEMP_LSB_C,
         })
     }
 
@@ -301,8 +301,8 @@ mod tests {
     #[test]
     fn a_full_pack_on_a_60v_scale_reads_67_2_v() {
         let mut bus = Fake::default();
-        // 67.2 V over a 312.5 µV step is 215040, held in the top 20 bits.
-        bus.set_u24(regs::VBUS, 215_040 << 4);
+        // 67.2 V over a 195.3125 µV step is 344064, held in the top 20 bits.
+        bus.set_u24(regs::VBUS, 344_064 << 4);
         let r = Monitor::new(bus, shunt()).read().unwrap();
         assert!((r.bus_v - 67.2).abs() < 1e-3);
     }

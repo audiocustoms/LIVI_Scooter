@@ -10,7 +10,7 @@ use livi_core_proto::state::{Screen, State};
 use livi_ui_model::dashboard::gauge::{self, Drawing, Scale, Spec, draw, groups, label_overflow};
 use livi_ui_model::dashboard::layout::{Center, pages, spec};
 use livi_ui_model::dashboard::nav::{Nav, nav};
-use livi_ui_model::dashboard::readings::{Readings, Turn, energy_text, readings};
+use livi_ui_model::dashboard::readings::{Readings, Turn, pack_text, readings};
 use livi_ui_model::mask::{Mask, Stream, mask};
 use slint::{Color, ComponentHandle, Image, ModelRc, SharedString, VecModel};
 
@@ -328,9 +328,9 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
     d.set_speed_label(r.speed_label.into());
     d.set_gear(r.gear.clone().into());
     d.set_charge_text(charge_text(r.fuel).into());
-    // Without a measured level there is nothing to show but the label, which is
+    // Without a measurement there is nothing to show but the label, which is
     // what a scooter reads until its pack sensor reports.
-    let energy = r.battery_wh.map(energy_text).unwrap_or_default();
+    let energy = pack_text(r.battery_wh, r.pack_voltage);
     d.set_charge_energy(energy.into());
     d.set_turn_left(r.turn == Turn::Left);
     d.set_turn_right(r.turn == Turn::Right);

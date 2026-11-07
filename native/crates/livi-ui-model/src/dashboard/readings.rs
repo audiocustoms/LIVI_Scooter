@@ -52,6 +52,8 @@ pub struct Readings {
     /// Energy left in the pack, when either the car reports it or a scooter's
     /// settings describe the pack.
     pub battery_wh: Option<f64>,
+    /// Pack voltage as measured by the pack monitor, in volts.
+    pub pack_voltage: Option<f64>,
     pub scooter: bool,
     /// Draw the development stand-in map instead of the projection stream.
     pub dev_fake_map: bool,
@@ -67,6 +69,22 @@ pub fn energy_text(wh: f64) -> String {
         return String::new();
     }
     format!("{wh:.0} Wh")
+}
+
+/// The caption under the charge percentage: energy left and live pack voltage,
+/// like `26Wh | 10,69V`. Whichever is missing is left out.
+pub fn pack_text(wh: Option<f64>, volts: Option<f64>) -> String {
+    let energy = wh
+        .filter(|wh| wh.is_finite() && *wh >= 0.0)
+        .map(|wh| format!("{wh:.0}Wh"));
+    let volts = volts
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .map(|v| format!("{v:.2}V").replace('.', ","));
+    [energy, volts]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 pub fn gear(v: &Value) -> String {
@@ -173,6 +191,7 @@ pub fn readings(state: &State, screen: Screen) -> Readings {
         battery_level: fuel as f64,
         battery_scale,
         battery_wh,
+        pack_voltage: num("packVoltage"),
         scooter: c.car_type == Some(CarType::Scooter),
         dev_fake_map: c.dev_fake_map,
         oil_text: format!("{}°", temperature(oil, temp_unit).round()),
@@ -272,6 +291,23 @@ mod tests {
             r.battery_wh, None,
             "a configured pack alone is not a measurement, the caption keeps its label"
         );
+    }
+
+    #[test]
+    fn the_caption_pairs_energy_with_the_live_voltage() {
+        assert_eq!(pack_text(Some(26.4), Some(10.69)), "26Wh | 10,69V");
+        assert_eq!(pack_text(Some(26.4), None), "26Wh");
+        assert_eq!(pack_text(None, Some(10.69)), "10,69V");
+        assert_eq!(pack_text(None, None), "");
+        assert_eq!(pack_text(Some(f64::NAN), Some(12.0)), "12,00V");
+    }
+
+    #[test]
+    fn the_pack_voltage_comes_from_the_measurement() {
+        let s = state(json!({ "packVoltage": 10.69 }), json!({ "carType": 13 }));
+        assert_eq!(readings(&s, Screen::Main).pack_voltage, Some(10.69));
+        let none = state(json!({}), json!({ "carType": 13 }));
+        assert_eq!(readings(&none, Screen::Main).pack_voltage, None);
     }
 
     #[test]
