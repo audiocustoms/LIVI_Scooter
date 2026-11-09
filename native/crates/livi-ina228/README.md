@@ -115,8 +115,9 @@ pack is fitted:
 | `scooterBatterySensor` | off | reads the pack over I²C |
 
 `SHUNT_CAL` comes out as `13107.2e6 × (I_max / 2^19) × R`, which is 1875 for the
-FL-2. The bus itself is brought up with
-[`scripts/dev/livi-pi-i2c.sh`](../../../scripts/dev/livi-pi-i2c.sh).
+FL-2. The bus is enabled by the installer itself; on a host installed before that
+existed, or to inspect a running one,
+[`scripts/dev/livi-pi-i2c.sh`](../../../scripts/dev/livi-pi-i2c.sh) does the same.
 
 ## When something is wrong
 

@@ -67,8 +67,10 @@ several times slower and keeps virus scanners busy on every object file.
 
 ## `livi-pi-i2c` — the pack monitor's bus on a Pi
 
-Brings up the I²C bus an INA228 pack monitor sits on. Run it **on the Pi**, not
-through the dev host:
+The installer enables this bus itself (`livi_enable_i2c` in
+`scripts/install/common.sh`), so a fresh installation needs nothing here. This
+script stays for hosts installed before that, and for checking a running one.
+Run it **on the Pi**, not through the dev host:
 
 ```sh
 sudo scripts/dev/livi-pi-i2c.sh --reboot
@@ -86,6 +88,29 @@ It does three things, each skipped when already in place:
 `--check` reports the state and whether the monitor answers at the expected
 address, changing nothing. `i2cdetect` lives in `/usr/sbin`, which a
 non-interactive ssh session does not always have in `PATH`.
+
+## The Network page under System
+
+`Settings → System → Network` lists what the host is attached to: every
+interface that is up and has an address, with its IPv4 and IPv6 addresses, its
+gateway, its link (level and rate for a radio, negotiated rate for a cable), its
+MAC address, and the resolvers the host asks. An interface with nothing to show
+for a field leaves that row out rather than printing a dash.
+
+The data comes from `system.network` in the core state, which
+[`netinfo.rs`](../../native/crates/livi-core/src/netinfo.rs) fills every ten
+seconds from `ip -j addr`, `ip -j route show default`, `iw dev <iface> link` and
+`/etc/resolv.conf`. A wireless interface it finds in `livi_wifi::ap_state` is
+reported as an access point rather than a station, so a host that offers its own
+network for wireless projection shows `10.10.0.1` and its SSID instead of an
+empty wireless link.
+
+Two things that were learnt the hard way there:
+
+- `ip` prints `operstate` as `UP`, not `up`, and the casing has differed between
+  iproute2 releases. The comparison ignores case for that reason.
+- `ip` and `iw` live in `/usr/sbin`, which a service does not always have on its
+  `PATH`, so the tools are resolved by absolute path.
 
 ## Where the logs are
 

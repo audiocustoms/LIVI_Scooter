@@ -19,6 +19,21 @@ const OIL_MAX_C: f64 = 150.0;
 const OIL_WARN_C: f64 = 125.0;
 const MPH_PER_KPH: f64 = 0.621_371;
 
+/// Shown under the speed number until a scooter reports a real distance.
+///
+/// Nothing counts one yet: the vehicle bus a scooter has carries no odometer,
+/// and the pack monitor cannot see distance. This is a fixed stand-in so the
+/// row can be laid out and looked at; `Readings::odometer` is the one place to
+/// change once a source exists.
+const ODOMETER_PLACEHOLDER: &str = "03551km";
+
+/// Shown as the selected drive level until a scooter reports its own.
+///
+/// Same story as [`ODOMETER_PLACEHOLDER`]: the level arrives over the one-wire
+/// tacho link (see `scripts/dev/M1S-TACHO-LINK.md`), which is not decoded yet.
+/// Level 2 is the middle one and the usual choice, so it is the stand-in.
+const DRIVE_LEVEL_PLACEHOLDER: u8 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Turn {
     #[default]
@@ -33,6 +48,13 @@ pub struct Readings {
     pub speed: f64,
     pub speed_text: String,
     pub speed_label: &'static str,
+    /// Odometer under the speed number, empty when there is none to show.
+    pub odometer: String,
+    /// Drive level 1-3 above the odometer, `0` when the drive type has none.
+    pub drive_level: u8,
+    /// Speeds the scale marks in red, in the unit the scale uses. Empty when
+    /// nothing is marked.
+    pub speed_markers: Vec<f64>,
     pub speed_scale: Scale,
     pub rpm: f64,
     pub rpm_scale: Scale,
@@ -167,6 +189,24 @@ pub fn readings(state: &State, screen: Screen) -> Readings {
             SpeedUnit::Kmh => "KPH",
             SpeedUnit::Mph => "MPH",
         },
+        // A scooter gets the odometer row; other drive types keep the dashboard
+        // they had, and a fabricated distance there would be a wrong one.
+        odometer: (c.car_type == Some(CarType::Scooter))
+            .then_some(ODOMETER_PLACEHOLDER)
+            .unwrap_or_default()
+            .to_string(),
+        drive_level: if c.car_type == Some(CarType::Scooter) {
+            DRIVE_LEVEL_PLACEHOLDER
+        } else {
+            0
+        },
+        // The marks are stored in km/h and belong on the scale in whatever unit
+        // the scale is drawn in.
+        speed_markers: [c.speed_marker_kph, c.speed_marker2_kph, c.speed_marker3_kph]
+            .into_iter()
+            .filter(|kph| kph.is_finite() && *kph > 0.0)
+            .map(|kph| speed(kph, unit))
+            .collect(),
         speed_scale,
         rpm: num("rpm").unwrap_or(0.0),
         rpm_scale,
@@ -317,5 +357,79 @@ mod tests {
         assert_eq!(energy_text(0.0), "0 Wh");
         assert_eq!(energy_text(f64::NAN), "");
         assert_eq!(energy_text(-5.0), "");
+    }
+
+    #[test]
+    fn a_scooter_has_an_odometer_under_the_speed() {
+        let s = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 13, "speedUnit": "kmh" }),
+        );
+        let r = readings(&s, Screen::Main);
+        assert_eq!(r.speed_label, "KPH");
+        assert_eq!(
+            r.odometer, "03551km",
+            "the placeholder until one is counted"
+        );
+    }
+
+    #[test]
+    fn other_drive_types_get_no_odometer_row() {
+        let s = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 1, "speedUnit": "kmh" }),
+        );
+        assert_eq!(readings(&s, Screen::Main).odometer, "");
+    }
+
+    #[test]
+    fn a_scooter_defaults_to_drive_level_two() {
+        let s = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 13, "speedUnit": "kmh" }),
+        );
+        assert_eq!(readings(&s, Screen::Main).drive_level, 2);
+    }
+
+    #[test]
+    fn other_drive_types_get_no_drive_level() {
+        let s = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 1, "speedUnit": "kmh" }),
+        );
+        assert_eq!(readings(&s, Screen::Main).drive_level, 0);
+    }
+
+    #[test]
+    fn the_speed_markers_sit_where_the_scale_has_them() {
+        let kmh = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 1, "speedUnit": "kmh", "speedMarkerKph": 130, "speedMarker3Kph": 30 }),
+        );
+        assert_eq!(
+            readings(&kmh, Screen::Main).speed_markers,
+            vec![130.0, 30.0],
+            "the marks keep the order they are configured in, gaps dropped"
+        );
+        let mph = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 1, "speedUnit": "mph", "speedMarkerKph": 130 }),
+        );
+        let marks = readings(&mph, Screen::Main).speed_markers;
+        assert_eq!(marks.len(), 1);
+        assert!(
+            (marks[0] - 80.778).abs() < 0.01,
+            "the mark is drawn on a scale in miles, got {}",
+            marks[0]
+        );
+    }
+
+    #[test]
+    fn no_marker_means_an_empty_list() {
+        let s = state(
+            json!({ "speedKph": 42 }),
+            json!({ "carType": 1, "speedUnit": "kmh" }),
+        );
+        assert!(readings(&s, Screen::Main).speed_markers.is_empty());
     }
 }

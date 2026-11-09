@@ -61,10 +61,16 @@ export global DashState {
     in property <GaugeData> speed-gauge;
     in property <GaugeData> rpm-gauge;
     in property <float> speed-t;
+    /// Where the speed markers sit on the scale, 0..1 each. Empty for none.
+    in property <[float]> speed-markers;
     in property <float> rpm-t;
     in property <float> ring-shift;
     in property <string> speed-text: "0";
     in property <string> speed-label: "KPH";
+    /// Odometer, shown left of the unit under the speed number.
+    in property <string> speed-note: "";
+    /// Drive level 1-3 on a scooter; 0 hides the row.
+    in property <int> drive-level: 0;
     in property <string> gear: "P";
     in property <string> gear-label: "GEAR";
     in property <string> charge-text: "0%";

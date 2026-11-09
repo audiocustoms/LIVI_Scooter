@@ -260,6 +260,9 @@ pub struct System {
     pub interface_models: BTreeMap<String, String>,
     pub dongle: Option<DongleRadios>,
     pub link_speed: Option<LinkSpeed>,
+    /// What the host is attached to: addresses, gateways, wireless links.
+    #[serde(default)]
+    pub network: Network,
     pub wifi_bands: Vec<WifiBand>,
     pub wifi_channels: Vec<u32>,
     pub wifi_countries: Vec<String>,
@@ -269,6 +272,46 @@ pub struct System {
     pub audio_sources: Vec<AudioDevice>,
     pub start_page: String,
     pub fonts: Vec<String>,
+}
+
+/// Everything the host is attached to, for the settings page.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Network {
+    /// Interfaces that are up and carry an address, ethernet first.
+    pub interfaces: Vec<NetIface>,
+    /// The resolvers the host uses, in the order it asks them.
+    pub dns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetKind {
+    #[default]
+    Ethernet,
+    /// A station, joined to someone else's access point.
+    Wifi,
+    /// The host is the access point, as it is for wireless projection.
+    Ap,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NetIface {
+    pub name: String,
+    pub kind: NetKind,
+    /// `192.168.0.20/24`, empty when the interface has no IPv4 address.
+    pub ipv4: String,
+    /// Global IPv6 addresses only; link-local ones say nothing about reach.
+    pub ipv6: Vec<String>,
+    pub gateway: String,
+    pub mac: String,
+    /// The network joined, or the one this host offers. Empty when unknown.
+    pub ssid: String,
+    /// Receive level of a station, in dBm. Negative, so higher is better.
+    pub signal_dbm: Option<i32>,
+    /// Negotiated rate in Mbit/s, where the driver reports one.
+    pub rate_mbps: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

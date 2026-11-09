@@ -456,6 +456,41 @@ livi_app_config_value() {
   livi_app_config_jq '.[$k] | if . == null or . == "" then $d else . end' -r --arg k "$1" --arg d "$2"
 }
 
+# Hardware I2C, the bus the INA228 pack monitor sits on.
+#
+# Raspberry Pi OS ships `#dtparam=i2c_arm=on` commented out, so the bus does not
+# exist until that line is active. The overlay creates it, but /dev/i2c-* only
+# appears once i2c-dev is loaded. Both take effect on the next boot, which is the
+# reboot the installer asks for anyway.
+livi_enable_i2c() {
+  if [ ! -f "$LIVI_BOOT_CONFIG" ]; then
+    echo "→ No $LIVI_BOOT_CONFIG on this host, skipping the I2C bus"
+    return 0
+  fi
+  echo "→ Enabling I2C for the pack monitor"
+  if grep -Eq '^[[:space:]]*dtparam=i2c_arm=on' "$LIVI_BOOT_CONFIG"; then
+    echo "   i2c_arm is already enabled"
+  elif grep -Eq '^[[:space:]]*#dtparam=i2c_arm=on' "$LIVI_BOOT_CONFIG"; then
+    sudo cp -p "$LIVI_BOOT_CONFIG" "$LIVI_BOOT_CONFIG.livi-bak"
+    sudo sed -i 's/^[[:space:]]*#dtparam=i2c_arm=on.*/dtparam=i2c_arm=on/' "$LIVI_BOOT_CONFIG"
+    echo "   enabled the stock dtparam=i2c_arm line in $LIVI_BOOT_CONFIG"
+  else
+    sudo cp -p "$LIVI_BOOT_CONFIG" "$LIVI_BOOT_CONFIG.livi-bak"
+    printf 'dtparam=i2c_arm=on\n' | sudo tee -a "$LIVI_BOOT_CONFIG" >/dev/null
+    echo "   added dtparam=i2c_arm to $LIVI_BOOT_CONFIG"
+  fi
+
+  sudo mkdir -p "$(dirname "$LIVI_MODULES_LOAD")"
+  echo i2c-dev | sudo tee "$LIVI_MODULES_LOAD" >/dev/null
+  sudo modprobe i2c-dev 2>/dev/null || true
+
+  if command -v i2cdetect >/dev/null 2>&1 || [ -x /usr/sbin/i2cdetect ]; then
+    echo "   i2c-tools is already installed"
+  else
+    livi_pm_install i2c-tools
+  fi
+}
+
 # Sets the regulatory domain as the driver loads, so hostapd does not wait for the kernel
 # to fetch it. Only once the user has chosen a country in LIVI.
 livi_write_regdom() {

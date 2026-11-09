@@ -41,6 +41,13 @@ pub fn schema() -> Node {
             )
             .icon("logs"),
             page(
+                "network",
+                "settings.network",
+                "Network",
+                "network",
+                CustomPage::Network,
+            ),
+            page(
                 "softwareUpdate",
                 "settings.softwareUpdate",
                 "Software Update",

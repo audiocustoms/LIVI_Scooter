@@ -58,8 +58,8 @@ Four channels, one part. The four families worth looking at, commonest first:
 
 ### Optocoupler board
 
-The cheapest boards have one gotcha each, and both are worth knowing before the
-order is placed.
+The cheapest boards have a gotcha or two each, and all of them are worth knowing
+before the order is placed.
 
 **The input resistor is usually sized for 5 V.** A board advertised as
 3.3–5 V has around 1 kΩ per channel. On 12 V that gives roughly 10 mA, which
@@ -85,6 +85,34 @@ opposite of what the reader expects. Two ways out:
 Either way the output side of the board must be powered from **3.3 V, not 5 V** —
 most boards pull their output up to their own VCC, and 5 V on a GPIO is not
 survivable.
+
+**The input LED has no reverse protection.** The input is a resistor and the LED,
+nothing else, and a PC817 tolerates only 6 V across it backwards. One reversed
+wire while crimping kills that channel on the first attempt. A 1N4148 in
+anti-parallel with each input, or a Schottky in series, costs a few cents and
+makes the mistake harmless. The series part also drops enough voltage to take the
+edge off an inductive spike.
+
+**The stated minimum supply voltage can sit above 3.3 V.** Listings advertise
+"3,6–30 V", and that figure belongs to the output pull-up rail as much as to the
+input. On the passive boards — PC817, resistors, a jumper, nothing more — it is
+the seller's advice rather than a limit of the parts, and 3.3 V works. On a board
+that carries a regulator or a comparator it does not, and the output never
+switches cleanly. Look at the board, not the listing.
+
+### On the bench
+
+Before anything touches the Pi, put 12 V on one input, power the output side from
+3.3 V, and measure the three things no listing tells you:
+
+1. **Output level**, signal on and off, in both jumper positions. One setting has
+   to give 0 V and roughly 3.3 V. A volt or so in the low state, or 5 V in the
+   high state, means the board is the wrong kind.
+2. **Input current**, meter in series with the 12 V wire. Around 4–5 mA is right;
+   closer to 10 mA means the board is the 5 V kind and needs the 1.8 kΩ in series.
+3. **All four channels alike.** Cheap boards ship with a pull-up missing or a
+   resistor of the wrong value often enough to be worth the two minutes, and a
+   channel that reads high when unwired looks exactly like an indicator stuck on.
 
 ### Relay board
 
@@ -167,11 +195,19 @@ fault.
 The control unit delivers a **steady** level while an indicator is active; the
 blinking is done by the UI, so nothing here has to count flashes.
 
-Every one of these symbols is on screen all the time, on a translucent plate of
-the same tone the charge readout uses. An unlit symbol stays at 30 % opacity and
-a lit one goes to full, so the place is known before it lights up; a blinking
-symbol dims between those two states rather than disappearing, which is far
-easier to read at speed than something appearing out of nothing twice a second.
+All of this styling is **scooter-only**. On a scooter each symbol sits on a
+translucent plate of the same tone the charge readout uses, and is on screen all
+the time: an unlit symbol stays at 30 % opacity and a lit one goes to full, so
+the place is known before it lights up. A blinking symbol dims between those two
+states rather than disappearing, which is far easier to read at speed than
+something appearing out of nothing twice a second. Scooter symbols are also
+drawn larger, 100 u instead of 51 u for the arrows and 56 u instead of 30 u for
+the row.
+
+Every other drive type keeps the way LIVI always drew them: no plate, original
+size and position, and nothing on screen until the signal is there. `DashState
+.scooter` decides, in `Lamp` and in the dashboard's `lamp-arrow`/`lamp-row`/
+`lamp-gap`/`lamp-y` properties.
 
 Both sides high is what a hazard flasher looks like from outside, so it is
 reported as hazards rather than as two directions at once.

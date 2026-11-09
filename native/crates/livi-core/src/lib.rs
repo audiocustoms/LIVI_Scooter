@@ -46,6 +46,7 @@ mod kiosk_unit;
 pub mod log_file;
 mod mfi;
 mod nav_text;
+mod netinfo;
 mod nmea;
 pub mod paths;
 pub mod power;
@@ -184,6 +185,7 @@ pub async fn run(
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     tokio::spawn(battery::run(core.clone(), inside.clone()));
     tokio::spawn(inputs::run(core.clone(), inside.clone()));
+    tokio::spawn(netinfo::run(core.clone()));
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     tokio::spawn(car_bridge::run(core.clone(), inside.clone()));
     #[cfg(any(target_os = "linux", target_os = "macos"))]

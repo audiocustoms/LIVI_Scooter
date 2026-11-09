@@ -76,6 +76,9 @@ pub enum OptionSource {
     BtAdapters,
     DabGains,
     Cameras,
+    /// Marker positions on the speed scale, which follow the speed unit. The
+    /// config path tells it which of the three marks it is building a list for.
+    SpeedMarker(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +118,7 @@ pub enum CustomPage {
     GpsInfo,
     IconUploader,
     MfiCertificate,
+    Network,
     PowerOff,
     Restart,
     SoftwareUpdate,

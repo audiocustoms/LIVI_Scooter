@@ -9,6 +9,7 @@ pub mod files;
 mod gps;
 pub mod icon;
 mod mfi;
+mod network;
 mod radio;
 mod system;
 pub mod touch;
@@ -43,6 +44,7 @@ pub fn rows(page: CustomPage, state: &Value, t: &Strings, facts: &Facts) -> Opti
         CustomPage::SoftwareUpdate => system::update(state, t, facts),
         CustomPage::Restart | CustomPage::PowerOff => Vec::new(),
         CustomPage::WifiLinkInfo => system::link_speed(state, t),
+        CustomPage::Network => network::rows(state, t),
         CustomPage::CarReadings => car::readings(state, t),
         CustomPage::DashboardLayouts => car::layouts(state, t),
         CustomPage::GpsInfo => gps::data(state, t),

@@ -7,6 +7,10 @@ set -euo pipefail
 #   sudo scripts/dev/livi-pi-i2c.sh              # enable, install, no reboot
 #   sudo scripts/dev/livi-pi-i2c.sh --reboot     # and reboot afterwards
 #   scripts/dev/livi-pi-i2c.sh --check           # only report what is set up
+#
+# The installer does the same through livi_enable_i2c in
+# scripts/install/common.sh, so this is only needed on a host installed before
+# that existed, or to inspect one.
 
 BUS=1
 TOOLS=i2c-tools

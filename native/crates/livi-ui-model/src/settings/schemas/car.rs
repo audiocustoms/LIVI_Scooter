@@ -5,7 +5,8 @@
 use livi_core_proto::config::ScooterPack;
 
 use crate::settings::node::{
-    CustomPage, Label, Node, OptionValue, Shown, UnitSource, choice, number_choice, text_choice,
+    CustomPage, Label, Node, OptionSource, OptionValue, Shown, UnitSource, choice, number_choice,
+    text_choice,
 };
 
 const CAR_TYPES: [(&str, &str, f64); 14] = [
@@ -69,6 +70,31 @@ fn carplay() -> Node {
         ],
     )
     .icon("wirelessCp")
+}
+
+/// The three marks a driver can put on the speed scale, each its own selection.
+const SPEED_MARKERS: [(&str, &str, &str); 3] = [
+    ("speedMarkerKph", "settings.speedMarker1", "Marker 1"),
+    ("speedMarker2Kph", "settings.speedMarker2", "Marker 2"),
+    ("speedMarker3Kph", "settings.speedMarker3", "Marker 3"),
+];
+
+fn speed_markers() -> Node {
+    Node::route(
+        "speedMarker",
+        Label::new("settings.speedMarker", "Speed Marker"),
+        SPEED_MARKERS
+            .iter()
+            .map(|&(path, key, text)| {
+                Node::select(Label::new(key, text), path, Vec::new())
+                    .icon("speedMarker")
+                    .options_from(OptionSource::SpeedMarker(path))
+                    .display_value()
+                    .page(Label::new(key, text))
+            })
+            .collect(),
+    )
+    .icon("speedMarker")
 }
 
 pub fn schema() -> Node {
@@ -139,6 +165,7 @@ pub fn schema() -> Node {
                 .display_value()
                 .shown(Shown::Suffix(" rpm"))
                 .page(Label::new("settings.redlineRpm", "Redline")),
+            speed_markers(),
             Node::select(
                 Label::new("settings.scooterBatteryVoltage", "Scooter Battery Voltage"),
                 "scooterBatteryVoltage",

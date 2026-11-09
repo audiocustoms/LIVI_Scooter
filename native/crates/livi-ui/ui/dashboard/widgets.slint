@@ -5,12 +5,16 @@
 import { Theme } from "../theme.slint";
 import { Blink, DashState, Signal } from "state.slint";
 
-/// A telletale symbol on a plate.
+/// A telltale symbol.
 ///
-/// The plate is always on screen, so the driver knows where a symbol sits before
-/// it ever lights up. An unlit symbol stays faintly visible; a blinking one dims
-/// to the same level instead of vanishing, which reads far calmer at speed than
-/// something appearing out of nothing twice a second.
+/// On a scooter it sits on a plate that is always on screen, so the driver knows
+/// where a symbol is before it ever lights up: an unlit one stays faintly
+/// visible, and a blinking one dims to that level instead of vanishing, which
+/// reads far calmer at speed than something appearing out of nothing twice a
+/// second.
+///
+/// Every other drive type keeps the way LIVI always drew these: no plate, and
+/// nothing at all until the signal is there.
 export component Lamp inherits Rectangle {
     in property <image> source;
     in property <bool> active;
@@ -22,23 +26,60 @@ export component Lamp inherits Rectangle {
 
     /// How much of an unlit symbol remains visible.
     property <float> unlit: 0.3;
+    /// The plate and the always-visible symbol are the scooter's.
+    property <bool> plated: DashState.scooter;
 
-    background: root.plate;
+    background: root.plated ? root.plate : transparent;
     border-radius: min(root.width, root.height) * 0.18;
     Image {
-        x: root.width * 0.05;
-        y: root.height * 0.05;
-        width: root.width * 0.9;
-        height: root.height * 0.9;
+        x: root.plated ? root.width * 0.05 : 0;
+        y: root.plated ? root.height * 0.05 : 0;
+        width: root.plated ? root.width * 0.9 : root.width;
+        height: root.plated ? root.height * 0.9 : root.height;
         source: root.source;
         colorize: root.tint;
         transform-rotation: root.rotation;
-        opacity: !root.active || (root.blink && !Blink.on) ? root.unlit : 1;
+        opacity: root.plated
+            ? (!root.active || (root.blink && !Blink.on) ? root.unlit : 1)
+            : (root.active && (!root.blink || Blink.on) ? 1 : 0);
     }
 }
 
-export component SegmentBar inherits HorizontalLayout {
-    in property <float> ratio;
+/// The three drive levels of a scooter, the one in use filled in red.
+///
+/// It sits under the lamp row, where the driver already looks for state, and it
+/// is drawn even though no source reports a level yet: the row is laid out so
+/// the real value can simply replace the stand-in later.
+export component DriveLevels inherits HorizontalLayout {
+    in property <int> level;
+    in property <length> u: 1px;
+    /// Side of one cell, and the gap between two.
+    in property <length> cell: 52 * u;
+    in property <length> cell-gap: 10 * u;
+
+    spacing: root.cell-gap;
+    alignment: start;
+    for i in 3: Rectangle {
+        width: root.cell;
+        height: root.cell;
+        border-radius: root.cell * 0.2;
+        // The one in use carries the colour that already means "active" here;
+        // the other two stay quiet but visible.
+        background: i + 1 == root.level ? Signal.red : Theme.text.with-alpha(0.18);
+        Text {
+            width: parent.width;
+            height: parent.height;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            text: (i + 1);
+            font-size: root.cell * 0.56;
+            font-weight: 700;
+            color: i + 1 == root.level ? Theme.text : Theme.text-secondary.with-alpha(0.6);
+        }
+    }
+}
+
+export component SegmentBar inherits HorizontalLayout {    in property <float> ratio;
     in property <color> on-color;
     in property <length> u;
     property <int> filled: round(clamp(ratio, 0, 1) * 8);

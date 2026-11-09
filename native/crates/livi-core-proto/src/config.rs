@@ -99,6 +99,15 @@ pub struct Config {
     pub ev_max_dc_power_kw: Option<f64>,
     pub max_speed_kph: u32,
     pub speed_scale_step: u32,
+    /// Up to three speeds the scale marks in red, so limits are visible without
+    /// reading the number. `0` draws no mark. Stored in km/h like every other
+    /// speed here and converted for the scale in use.
+    #[serde(default)]
+    pub speed_marker_kph: f64,
+    #[serde(default)]
+    pub speed_marker2_kph: f64,
+    #[serde(default)]
+    pub speed_marker3_kph: f64,
     pub max_rpm: u32,
     pub redline_rpm: u32,
     /// Nominal scooter pack voltage in volts. The full and empty limits follow
@@ -613,6 +622,9 @@ pub fn defaults() -> Config {
         ev_max_dc_power_kw: None,
         max_speed_kph: 200,
         speed_scale_step: 40,
+        speed_marker_kph: 0.0,
+        speed_marker2_kph: 0.0,
+        speed_marker3_kph: 0.0,
         max_rpm: 5000,
         redline_rpm: 4500,
         scooter_battery_voltage: default_scooter_voltage(),

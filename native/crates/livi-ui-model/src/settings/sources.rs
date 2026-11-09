@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::i18n::Strings;
 use crate::settings::node::{Condition, OptionSource, Radio, Screen, UnitSource};
+use crate::settings::value::get;
 
 pub const KM_PER_MILE: f64 = 1.609344;
 const SPEED_MAX_SECTIONS: f64 = 15.0;
@@ -219,6 +220,51 @@ pub fn offers(source: OptionSource, state: &Value, t: &Strings) -> Vec<Offer> {
             .filter_map(|g| g.as_f64())
             .map(|db| plain(format!("{db:.1} dB"), Value::from(db)))
             .collect(),
+        OptionSource::SpeedMarker(path) => speed_marker(&state["config"], t, path),
+    }
+}
+
+/// The selectable marks on the speed scale: `0` (off) and then 5-unit steps up to
+/// the end of the scale, which is 130 km/h or 100 mph. The value is always the
+/// speed in km/h, so switching the unit keeps the same place on the scale; the
+/// label follows the unit.
+fn speed_marker(config: &Value, t: &Strings, path: &str) -> Vec<Offer> {
+    let mph = config["speedUnit"].as_str() == Some("mph");
+    let (top, suffix) = if mph {
+        (100u32, "mph")
+    } else {
+        (130u32, "km/h")
+    };
+    let to_kph = |v: f64| if mph { v * KM_PER_MILE } else { v };
+    let mut out: Vec<(f64, Offer)> = (0..=top)
+        .step_by(5)
+        .map(|step| {
+            let label = if step == 0 {
+                t.t("settings.speedMarkerOff", "Off")
+            } else {
+                format!("{step} {suffix}")
+            };
+            let kph = to_kph(f64::from(step));
+            (kph, plain(label, number(kph)))
+        })
+        .collect();
+    // A mark picked in the other unit is not on this grid. It keeps its place on
+    // the scale, so list it rather than leaving the row without a label.
+    let set = get(config, path).as_f64().unwrap_or(0.0);
+    if set > 0.0 && !out.iter().any(|(v, _)| (v - set).abs() < 1e-6) {
+        let shown = set / to_kph(1.0);
+        let label = format!("{shown:.1} {suffix}");
+        out.push((set, plain(label, number(set))));
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    }
+    out.into_iter().map(|(_, o)| o).collect()
+}
+
+fn number(v: f64) -> Value {
+    if v.fract() == 0.0 && v.abs() < 9.0e15 {
+        Value::from(v as i64)
+    } else {
+        Value::from(v)
     }
 }
 
@@ -273,5 +319,71 @@ mod tests {
         );
         assert_eq!(u.suffix, "mph");
         assert_eq!(u.max, Some(300.0));
+    }
+
+    #[test]
+    fn speed_markers_run_in_fives_to_the_end_of_the_scale() {
+        let state = json!({ "config": { "speedUnit": "kmh", "speedMarkerKph": 50 } });
+        let list = offers(
+            OptionSource::SpeedMarker("speedMarkerKph"),
+            &state,
+            &Strings::default(),
+        );
+        assert_eq!(list.len(), 27);
+        assert_eq!(list[0].label, "Off", "zero is the way to turn it off");
+        assert_eq!(list[1].label, "5 km/h");
+        assert_eq!(list.last().map(|o| o.label.as_str()), Some("130 km/h"));
+        assert_eq!(list[10].value, json!(50));
+    }
+
+    #[test]
+    fn speed_markers_follow_the_unit() {
+        let state = json!({ "config": { "speedUnit": "mph", "speedMarkerKph": 0 } });
+        let list = offers(
+            OptionSource::SpeedMarker("speedMarkerKph"),
+            &state,
+            &Strings::default(),
+        );
+        assert_eq!(list.len(), 21);
+        assert_eq!(list[1].label, "5 mph");
+        assert_eq!(list.last().map(|o| o.label.as_str()), Some("100 mph"));
+        assert_eq!(list[0].value, json!(0));
+    }
+
+    #[test]
+    fn a_marker_picked_in_the_other_unit_stays_in_the_list() {
+        let state = json!({ "config": { "speedUnit": "mph", "speedMarkerKph": 50 } });
+        let list = offers(
+            OptionSource::SpeedMarker("speedMarkerKph"),
+            &state,
+            &Strings::default(),
+        );
+        assert_eq!(
+            list.len(),
+            22,
+            "one entry for the value that is not on the grid"
+        );
+        assert_eq!(
+            list[7].label, "31.1 mph",
+            "sorted in, not appended behind 100"
+        );
+        assert_eq!(list[7].value, json!(50));
+    }
+
+    #[test]
+    fn every_marker_field_reads_its_own_value() {
+        let state = json!({ "config": { "speedUnit": "kmh", "speedMarker2Kph": 50 } });
+        let second = offers(
+            OptionSource::SpeedMarker("speedMarker2Kph"),
+            &state,
+            &Strings::default(),
+        );
+        assert!(second.iter().any(|o| o.label == "50 km/h"));
+        let first = offers(
+            OptionSource::SpeedMarker("speedMarkerKph"),
+            &state,
+            &Strings::default(),
+        );
+        assert_eq!(first.len(), 27, "the first mark is still off");
     }
 }

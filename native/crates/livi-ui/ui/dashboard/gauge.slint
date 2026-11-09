@@ -5,6 +5,44 @@
 import { Theme } from "../theme.slint";
 import { GaugeData, Signal } from "state.slint";
 
+/// One of the marks a driver can put on the speed scale: the needle's shape at
+/// the marked value, sized between a labelled tick and a plain one so it stands
+/// out without shouting, and in the colour the dashboard uses for a warning.
+component SpeedMark inherits Path {
+    in property <GaugeData> g;
+    /// Where the mark sits along the arc, 0..1.
+    in property <float> at;
+
+    viewbox-width: g.box-w;
+    viewbox-height: g.box-h;
+    fill: Signal.red;
+
+    property <angle> ma: (g.gap / 2 + at * (360 - g.gap)) * 1deg;
+    property <float> cx: g.cx + (g.mirror ? -g.radius * cos(ma) : g.radius * cos(ma));
+    property <float> cy: g.cy + g.radius * sin(ma);
+    property <angle> th: g.mirror ? 90deg - ma : ma - 90deg;
+    property <float> hw: (g.tick-w + g.fit) / 2;
+    property <float> hl: (g.major-h + g.tick-h) / 4;
+
+    MoveTo {
+        x: root.cx + (-root.hw) * cos(root.th) - (-root.hl) * sin(root.th);
+        y: root.cy + (-root.hw) * sin(root.th) + (-root.hl) * cos(root.th);
+    }
+    LineTo {
+        x: root.cx + root.hw * cos(root.th) - (-root.hl) * sin(root.th);
+        y: root.cy + root.hw * sin(root.th) + (-root.hl) * cos(root.th);
+    }
+    LineTo {
+        x: root.cx + root.hw * cos(root.th) - root.hl * sin(root.th);
+        y: root.cy + root.hw * sin(root.th) + root.hl * cos(root.th);
+    }
+    LineTo {
+        x: root.cx + (-root.hw) * cos(root.th) - root.hl * sin(root.th);
+        y: root.cy + (-root.hw) * sin(root.th) + root.hl * cos(root.th);
+    }
+    Close {}
+}
+
 export component Gauge inherits Rectangle {
     in property <GaugeData> g;
     in property <float> value-t;
@@ -15,6 +53,9 @@ export component Gauge inherits Rectangle {
     in property <color> needle-color: Theme.text;
     in property <bool> backdrop;
     in property <color> backdrop-color;
+    /// Speeds worth marking on the scale, each 0..1 along the arc. Only the
+    /// speed gauge uses them.
+    in property <[float]> markers;
 
     property <bool> started;
     property <float> t: started ? value-t : -0.08;
@@ -98,6 +139,12 @@ export component Gauge inherits Rectangle {
         fill: tr.index >= g.redline-index ? Signal.warn : root.pointer-color;
         opacity: root.pointer-idx > 0 && tr.index <= root.pointer-idx ? root.op * 0.5 * tr.index / root.pointer-idx : 0;
     }
+    for m in root.markers: SpeedMark {
+        width: parent.width;
+        height: parent.height;
+        g: root.g;
+        at: m;
+    }
     Path {
         width: parent.width;
         height: parent.height;
@@ -123,6 +170,16 @@ export component Gauge inherits Rectangle {
         }
         Close {}
     }
+    // The numbers sit outside the ring, which can be a map or a photo, so they
+    // carry their own contrast: a dark copy behind each, offset by two units.
+    // Slint draws in declaration order, so this pass stays underneath.
+    for l in g.labels: Text {
+        x: l.x * root.u - self.width / 2 + 2 * root.u;
+        y: l.y * root.u - self.height / 2 + 2 * root.u;
+        text: l.text;
+        color: #000000e6;
+        font-size: g.label-size * root.u;
+    }
     for l in g.labels: Text {
         x: l.x * root.u - self.width / 2;
         y: l.y * root.u - self.height / 2;
@@ -135,23 +192,38 @@ export component Gauge inherits Rectangle {
 export component Readout inherits Rectangle {
     in property <string> value;
     in property <string> caption;
+    /// A second caption in the same row as `caption`, aligned to the opposite
+    /// edge. The speed uses it for the odometer, which sits under the number on
+    /// the left while the unit stays on the right.
+    in property <string> note;
     in property <bool> to-end;
     in property <length> u;
     in property <bool> backdrop;
     in property <color> backdrop-color;
     /// Room for a fourth character, which a charge readout like `100%` needs.
     in property <bool> wide: false;
+    /// A width the plate keeps whatever it shows, so two readouts side by side
+    /// can be the same size.
+    in property <length> min-w: 0px;
 
     pure function snap(l: length) -> length { return round(l / 1phx) * 1phx; }
 
-    property <length> value-w: snap((root.wide ? 4 : 3) * 0.56 * 96 * u);
+    /// Three characters of the big font, the old fixed guess. It stays as a
+    /// floor so a short value does not shrink the plate.
+    property <length> floor-w: snap((root.wide ? 4 : 3) * 0.56 * 96 * u);
     property <length> pad-x: snap(18 * u);
     property <length> pad-y: snap(10 * u);
     property <length> gap: snap(2 * u);
+    /// Breathing room between the caption and the note, so the two never touch.
+    property <length> note-gap: snap(16 * u);
     property <length> big-h: snap(big.preferred-height);
     property <length> small-h: snap(small.preferred-height);
+    /// What the two lines actually need. A fixed character count is only a guess
+    /// and `100%` is wider than four average glyphs, so the text measures itself.
+    property <length> text-w: snap(max(big.preferred-width, small.preferred-width + note-text.preferred-width + (root.note == "" ? 0px : root.note-gap)));
+    property <length> inner-w: snap(max(root.text-w, root.floor-w, root.min-w - 2 * root.pad-x));
     Rectangle {
-        width: root.value-w + 2 * root.pad-x;
+        width: root.inner-w + 2 * root.pad-x;
         height: root.big-h + root.gap + root.small-h + 2 * root.pad-y;
         x: root.snap((parent.width - self.width) / 2);
         y: root.snap((parent.height - self.height) / 2);
@@ -160,7 +232,7 @@ export component Readout inherits Rectangle {
         big := Text {
             x: root.pad-x;
             y: root.pad-y;
-            width: root.value-w;
+            width: root.inner-w;
             text: root.value;
             font-size: root.snap(96 * root.u);
             color: Theme.text;
@@ -169,13 +241,24 @@ export component Readout inherits Rectangle {
         small := Text {
             x: root.pad-x;
             y: root.pad-y + root.big-h + root.gap;
-            width: root.value-w;
+            width: root.inner-w;
             text: root.caption;
             font-size: root.snap(24 * root.u);
             font-weight: 500;
             letter-spacing: 1 * root.u;
             color: Theme.text-secondary.with-alpha(0.73);
             horizontal-alignment: root.to-end ? right : left;
+        }
+        note-text := Text {
+            x: root.pad-x;
+            y: root.pad-y + root.big-h + root.gap;
+            width: root.inner-w;
+            text: root.note;
+            font-size: root.snap(24 * root.u);
+            font-weight: 500;
+            letter-spacing: 1 * root.u;
+            color: Theme.text-secondary.with-alpha(0.73);
+            horizontal-alignment: root.to-end ? left : right;
         }
     }
 }

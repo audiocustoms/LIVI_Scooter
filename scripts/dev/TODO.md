@@ -16,28 +16,40 @@ On a 12 V bench pack with an FL-2 shunt and a load attached:
   at the last value published before the pack left its full-voltage window,
   which showed 95 % at 11.5 V; the reference is now kept for the whole discharge
 
+## The "1.5× bus voltage" was a measurement error
+
+An earlier note here claimed the chip reports 1.5× the voltage at its `VBUS` pin
+and that the board therefore divides the input. That was wrong, and the cost was
+real: `scooterVbusScale` was set to `0.6653` on the Pi 5, which made the
+dashboard show a third less than the pack actually had.
+
+The chip was right all along. The probe script used **312.5 µV** per `VBUS` bit,
+which is the `VSHUNT` LSB on the wide range, not the `VBUS` one. The correct
+value, per the datasheet and TI's own driver, is **195.3125 µV** — which is what
+`livi-ina228` uses. 312.5 / 195.3125 = 1.6, which is the factor that looked like
+a hardware fault.
+
+Measured against a meter on the same board afterwards: the chip read 10.72 V
+where the meter showed 11.3 V. That is a 5 % deviation, small enough to be wiring
+and divider tolerance rather than a defect, and corrected per device with
+`scooterVbusScale` (1.0541 on that board).
+
+**Rule for the next probe:** read `VBUS` with 195.3125 µV per bit, and never
+reach into the chip while `livi-core` is reading it. A register select and the
+read are two separate I²C transfers, so a second master between them moves the
+pointer. That is what produced the oscillating percentages and the implausible
+`POWER` reading recorded further down — not the chip.
+
 ## Not verified
-
-**The bus voltage reads 1.5× high.** The meter at the `VBUS` pin shows 12.3 V
-where the chip reports 18.49 V, stably across samples, with the ground verified
-at 0 V against the pack's negative. A gain error that large is far outside the
-INA228 specification, so either the board divides `VBUS` deliberately or the
-chip is a relabelled clone.
-
-`VbusScale` is set to `0.6653` on the device to make the reading match the meter.
-It lives in that device's `config.json` only, not in the repository: it is a
-measurement of one board, not a project default.
 
 **The current is not verified against a reference.** Only the internal
 consistency is proven. A clone with a wrong LSB would still look consistent.
 
-One sample pair, taken under a load that switches between about 0.6 A and 0.9 A,
-read 0.5544 mV of shunt voltage and 0.607 A of current — 0.739 A if the shunt is
-taken at its word. Two conversions about 1 ms apart can differ that much on a
-switching load, so this is a hint rather than proof. What does not fit is the
-`POWER` register: 0.42 W where the voltage and current in the same burst say
-7 W. `ENERGY` on the other hand integrates to something plausible for the time
-the pack has been running, so the power scale deserves a look of its own.
+Two earlier sample pairs were taken while a probe was also talking to the chip,
+so their disagreement (0.5544 mV of shunt voltage against 0.607 A, and a `POWER`
+register 16× below the product of voltage and current) says more about the shared
+bus than about the sensor. Repeat them without a second reader before drawing a
+conclusion.
 
 ## Items
 
@@ -45,14 +57,16 @@ the pack has been running, so the power scale deserves a look of its own.
 | --- | --- | --- | --- |
 | 1 | Compare the current against a reference: a load of known wattage, or a meter in series | blocked, no reference load available | — |
 | 2 | Check `VbusScale` at a second voltage (24 V or 60 V). Constant factor means a linear divider and one factor suffices; a changing factor needs a curve instead | pending | 1 |
+| 2b | Correct the Pi 5's `scooterVbusScale`, which is still `0.6653` from the measurement error above and makes it read a third low. Should be re-measured against a meter, roughly `1.0` | pending | — |
 | 3 | Harden the counter reset: confirm the automatic one, add a manual "Reset Coulomb Counter" entry, record the timestamp and the voltage at that moment | pending | 1 |
 | 4 | Move the sensor settings into the menu: `scooterBatterySensor`, shunt mΩ, shunt amps and `VbusScale` are only editable in `config.json` today | pending | — |
 | 5 | ~~The core's log lines never reach the journal~~ — they do. `[battery]`, `[inputs]` and `[core]` all appear under the `AppRun` unit tag. What is *not* in the journal is the compositor: it writes its own log to `~/.config/LIVI/log/compositor.log`, which is where its input and plane decisions are | resolved | — |
 | 6 | Decide whether the die temperature (register `0x06`) belongs in the telemetry or only shows the chip heating itself | pending | — |
 | 7 | Move to the built-in 60 V pack: set Scooter, 60 V, 30 Ah, determine `VbusScale` at that voltage, enable the sensor, and wait for one full charge to give the counter its reference | pending | 2, 4 |
 | 8 | Build the four channel level shifter for the indicator and high beam lines and verify each one against the harness; the pin assignment is in [GPIO-INPUTS.md](GPIO-INPUTS.md) | pending | — |
-| 9 | Work out the `POWER` scale: the register reads 16× below what its own voltage and current readings multiply to, while `ENERGY` looks right. Nothing on the dashboard uses either yet | pending | 1 |
+| 9 | Work out the `POWER` scale: the register read 16× below what its own voltage and current multiplied to — but that was measured while a probe shared the bus, so re-measure before believing it. Nothing on the dashboard uses either register yet | pending | 1 |
 | 10 | Remove the `DEV: Fake Map Background` switch, its config key and the embedded image before a release. It is a development aid and must not ship | pending | — |
+| 11 | Decode the one-wire tacho link to get a real speed, the selected drive level (1-3) and the odometer. Until then the dashboard shows `03551km` and level 2 as fixed stand-ins — both come from `Readings` in `livi-ui-model` | blocked, no capture yet | — |
 
 Item 5 is closed, and it is worth remembering how: the missing logs were never
 missing, only looked for in the wrong place. Before the next search for a fault,

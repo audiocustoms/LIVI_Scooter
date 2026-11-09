@@ -321,11 +321,23 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
         d.set_rpm_gauge(gauge_data(g));
     }
     d.set_speed_t((r.speed / r.speed_scale.max.max(1.0)).clamp(0.0, 1.0) as f32);
+    // A mark past the end of the scale has no place on it, so it is left out
+    // rather than drawn somewhere it does not belong.
+    let marks: Vec<f32> = r
+        .speed_markers
+        .iter()
+        .map(|m| m / r.speed_scale.max.max(1.0))
+        .filter(|t| *t > 0.0 && *t <= 1.0)
+        .map(|t| t as f32)
+        .collect();
+    d.set_speed_markers(ModelRc::from(Rc::new(VecModel::from(marks))));
     let (gauge_scale, gauge_value, _) = right_gauge(r);
     d.set_rpm_t((gauge_value / gauge_scale.max.max(1.0)).clamp(0.0, 1.0) as f32);
     d.set_ring_shift(v.ring_shift as f32);
     d.set_speed_text(r.speed_text.clone().into());
     d.set_speed_label(r.speed_label.into());
+    d.set_speed_note(r.odometer.clone().into());
+    d.set_drive_level(i32::from(r.drive_level));
     d.set_gear(r.gear.clone().into());
     d.set_charge_text(charge_text(r.fuel).into());
     // Without a measurement there is nothing to show but the label, which is

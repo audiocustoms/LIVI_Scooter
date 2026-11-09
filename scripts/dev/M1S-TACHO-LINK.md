@@ -26,7 +26,8 @@ Annex A**. It is *not* UART framing in the 8N1 sense, and it is *not* Dallas
 | --- | --- | --- |
 | How many wires? | 1 signal + GND | measured / stated |
 | Direction | controller → cluster only | stated |
-| Payload | speed, drive level 1-2-3, odometer | stated |
+| Payload | speed (as a hall count), drive level 1-2-3 | sibling firmware, see below |
+| Odometer | **not on the wire**, accumulated in the cluster | standard + sibling firmware |
 | Framing | 2 ms PWM-coded bits, sync pulse, sum checksum | inferred |
 | Effective bit rate | 500 bit/s | inferred |
 | Frame period | ≈ 260 ms (≈ 3.8 frames/s) | inferred |
@@ -45,6 +46,79 @@ this controller class does. The discriminator is cheap, see [Next
 steps](#next-steps) T2: a telegram produces **periodic bursts at a fixed
 raster regardless of wheel speed**; a pulse train produces **evenly spaced
 pulses whose rate tracks the wheel**.
+
+## The odometer is computed in the cluster
+
+**[verified in the standard]** The T/JSEBA 002—2022 telegram carries no mileage
+signal. The word 里程 does not occur anywhere in the 27 pages; the 20-byte
+public telegram is battery data only (vendor code, model, cell chemistry, rated
+voltage and capacity, SOC, live voltage and current, three temperatures, fault
+list, charge/discharge state). Private telegrams are vendor defined, and
+nothing in the standard gives them a distance duty.
+
+**[verified in code]** A cluster-side driver for this protocol family ships in
+the vendor source tree of the open test tool. It integrates distance itself:
+
+```c
+// 里程必须实时累加计算,当前速度*运行时间累积形成
+cur_time = esKRNL_Time();
+if (last_time) {
+    if ((cur_time - last_time) < SPEED_TIME_OUT_CNT)   // 200 * 10 ms = 2 s
+        sif_drv.mm_inc += (cur_speed * 100 / 36) * (cur_time - last_time);
+}
+last_time = cur_time;
+m_inc = sif_drv.mm_inc / 1000;      // mm -> m
+sif_drv.mm_inc %= 1000;
+if (m_inc) __call_app(SIF_CB_INFO_M_INC, &m_inc);
+```
+
+`cur_speed` is km/h and the tick is 10 ms, so `speed * 100 / 36` mm per tick is
+exactly km/h converted to millimetres. The cluster accumulates millimetres and
+hands whole metres to the display layer. Two details carry over to our case:
+
+- The 2 s timeout means a **dead link freezes the odometer** instead of adding
+  phantom distance from a stale speed value.
+- Because the accumulation is the cluster's, the total lives in the cluster's
+  own non-volatile memory — in practice a 24C02-class I²C EEPROM. That is why a
+  replacement cluster starts at zero, and why "adjusting" a scooter's mileage
+  means editing that chip.
+
+**[verified in code] The controller does not even send km/h.** It sends a raw
+hall count:
+
+```c
+hall = (sif_data[7] << 8) | sif_data[8];
+cur_speed = (hall * 72 * TYRE_DIA_NUM) / (6 * HALL_NUM_PER_CIRCLE * MOTOR_POL_NUM)
+            * 314 / 1000000;    // km/h
+```
+
+with `MOTOR_POL_NUM = 26` and a tyre diameter that is a per-vehicle constant
+(368-638 mm across the variants in that tree). The payload word scales with
+wheel speed, but what it means in km/h is set by constants in the *cluster*,
+not the controller. Consequence for the decoder below: do not look for a
+"km/h byte". Look for a 16-bit word that rises linearly with wheel speed, and
+calibrate it by comparison instead of assuming 1 LSB = 1 km/h.
+
+**[verified in code] The drive level arrives as bit flags**, which matches the
+1-2-3 on the cluster: `sif_data[4]` bit 0 / bit 1 select D1 / D2 / D3,
+`sif_data[5]` bit 2 is R, `sif_data[2]` bit 1 or bit 3 is P.
+
+### Proving it on this scooter
+
+| Test | Procedure | Cluster owns the odometer | Controller sends it |
+| --- | --- | --- | --- |
+| Swap | Second cluster on the same controller | total restarts at 0 or keeps the old cluster's value | identical total appears |
+| Bench feed | Replay frames with a constant speed for 10 min | total climbs by exactly v × t, no ODO field in the frames | a payload word tracks the distance |
+| Power cut | Ride, then interrupt cluster supply, reconnect | total lags by the last save interval, typically ≤ 1 km | total is back instantly and exactly |
+| Long ride | Capture frames before and after a measured ride | no payload word moves by the distance | a word moves by the distance |
+
+The swap test is the cheapest and settles it in a minute. The bench feed is the
+one that matters for us, because we need to know whether a distance value exists
+in the payload at all.
+
+Vendor caveat, unchanged: private telegrams *may* carry distance for some
+manufacturers, and none of the 19 protocol layouts in that tool defines an
+odometer field. Unverified for this specific M1S firmware.
 
 ## What 1.4-1.8 V means
 
@@ -156,14 +230,23 @@ strongest available confirmation that the protocol family is right.
 **Settles:** whether the decode is correct at all — no checksum, no protocol.
 
 ### T5 — field mapping
-Record frames at drive level 1/2/3, at several speeds, and with the odometer
-changing (or a long ride).
-**Expect:** one byte tracking the level 1:1; one or two bytes rising
-monotonically with speed (scale likely 1 km/h or 0.1 km/h per LSB); two to
-three bytes acting as a counter.
-**Caveat:** the cluster may keep its own odometer in EEPROM from the speed
-value. If no counter is in the payload, that is the answer, not a decoding
-failure.
+Record frames at drive level 1/2/3 and at several speeds.
+**Expect:** bit flags for the level, not a value field (see the gear bits
+above); a 16-bit word rising linearly with wheel speed. That word's LSB is not
+km/h — in the sibling firmware it is a hall count scaled by tyre diameter and
+motor pole pairs. Calibrate against a GPS or against the cluster's own display,
+do not assume a scale.
+**Caveat:** if nothing rises with speed, suspect bit order or frame alignment
+before suspecting the protocol.
+
+### T5b — odometer ownership
+Note the displayed total, ride a measured distance, note it again; then
+power-cycle the cluster while capturing frames.
+**Expect (cluster owns it):** no payload field tracks the distance, and the
+total survives the power cycle unchanged.
+**If instead** a payload word moves by the ridden distance and follows the
+controller across a cluster swap, the vendor put distance into a private
+telegram — find that word and use it.
 
 ### T6 — wiring decision
 Once the level is known (T1), pick the shifter. If the wire is 5 V and the
@@ -215,3 +298,9 @@ Practical notes, for whoever writes it:
 - [ASD123-dsh/One-line-test](https://github.com/ASD123-dsh/One-line-test) —
   PC-side frame generator for 19 named Chinese one-wire cluster protocols,
   useful as a source of real frame layouts once the ID is known.
+- Same repository, vendor driver tree,
+  [`drv_sif/sif_fz/sif.c`](https://github.com/ASD123-dsh/One-line-test/blob/main/接码转码平台驱动源码/drv_sif/sif_fz/sif.c)
+  and `sif.h` — the cluster-side implementation quoted in
+  [The odometer](#the-odometer-is-computed-in-the-cluster): distance
+  integration from speed, the 2 s link timeout, the hall-count to km/h
+  conversion, and the gear bit positions.

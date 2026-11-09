@@ -7,7 +7,7 @@ import { Theme } from "theme.slint";
 import { Gauge, Readout } from "dashboard/gauge.slint";
 import { NavFull, NavMini } from "dashboard/nav.slint";
 import { Blink, DashState, Signal } from "dashboard/state.slint";
-import { Dots, Lamp, Level } from "dashboard/widgets.slint";
+import { Dots, DriveLevels, Lamp, Level } from "dashboard/widgets.slint";
 
 export { CapData, DashState, GaugeData, LabelData, TrailData } from "dashboard/state.slint";
 
@@ -22,6 +22,21 @@ export component Dashboard inherits Rectangle {
     property <color> shade: Theme.dark ? #0000008c : #ffffffb8;
     property <color> plate: Theme.dark ? #00000099 : #ffffffc7;
     property <bool> blinking: DashState.turn-left || DashState.turn-right || DashState.hazards;
+    /// A scooter shows its lamps on plates and large enough to read at a glance;
+    /// every other drive type keeps the original size and leaves them off.
+    property <float> lamp-arrow: DashState.scooter ? 100 : 51;
+    property <float> lamp-row: DashState.scooter ? 100 : 30;
+    property <float> lamp-gap: DashState.scooter ? 24 : 21;
+    property <length> lamp-y: root.top + (DashState.scooter ? 1 : 12) * root.u;
+    /// The drive levels sit in a row of their own under the lamps, on the same
+    /// centre line, and are sized like the plates above them.
+    property <float> level-cell: 64;
+    property <float> level-gap: 14;
+    property <float> level-w: 3 * root.level-cell + 2 * root.level-gap;
+    /// How far each readout moves towards the middle of the screen, so its plate
+    /// stops covering the ticks of the ring beside it. Both move by the same
+    /// amount, which keeps the pair symmetrical.
+    property <float> readout-shift: 60;
     property <length> swipe-from;
     /// A finger touched the dashboard, whatever the window layer above saw.
     callback woke;
@@ -76,6 +91,7 @@ export component Dashboard inherits Rectangle {
             u: root.u;
             g: DashState.speed-gauge;
             value-t: DashState.speed-t;
+            markers: DashState.speed-markers;
             scale-color: Theme.text-disabled;
             major-color: root.major;
             pointer-color: root.pointer;
@@ -83,14 +99,20 @@ export component Dashboard inherits Rectangle {
             backdrop-color: root.shade;
         }
         Readout {
-            x: round((root.left + (-32 + DashState.ring-shift - root.push + 235 + 34 - 100) * root.u) / 1phx) * 1phx;
+            x: round((root.left + (-32 + DashState.ring-shift - root.push + 235 + 34 - 100 + root.readout-shift) * root.u) / 1phx) * 1phx;
             y: round((root.top + (60 + 300 - 65) * root.u) / 1phx) * 1phx;
             width: 200 * root.u;
             height: 130 * root.u;
             u: root.u;
             value: DashState.speed-text;
             caption: DashState.speed-label;
+            note: DashState.speed-note;
             to-end: true;
+            /// The same plate as the charge readout beside it: a scooter gets a
+            /// fixed width both of them share, so the pair stays symmetrical
+            /// whatever a value is at the time.
+            wide: DashState.scooter;
+            min-w: DashState.scooter ? 280 * root.u : 0px;
             backdrop: DashState.map;
             backdrop-color: root.plate;
         }
@@ -107,7 +129,7 @@ export component Dashboard inherits Rectangle {
             backdrop-color: root.shade;
         }
         Readout {
-            x: round((root.left + (850 + root.push - DashState.ring-shift + 235 - 34 - 100) * root.u) / 1phx) * 1phx;
+            x: round((root.left + (850 + root.push - DashState.ring-shift + 235 - 34 - 100 - root.readout-shift) * root.u) / 1phx) * 1phx;
             y: round((root.top + (60 + 300 - 65) * root.u) / 1phx) * 1phx;
             width: 200 * root.u;
             height: 130 * root.u;
@@ -115,6 +137,7 @@ export component Dashboard inherits Rectangle {
             value: DashState.scooter ? DashState.charge-text : DashState.gear;
             caption: DashState.scooter ? (DashState.charge-energy != "" ? DashState.charge-energy : DashState.charge-label) : DashState.gear-label;
             wide: DashState.scooter;
+            min-w: DashState.scooter ? 280 * root.u : 0px;
             to-end: false;
             backdrop: DashState.map;
             backdrop-color: root.plate;
@@ -123,8 +146,8 @@ export component Dashboard inherits Rectangle {
         Lamp {
             x: root.left + 70 * root.u;
             y: root.top + 1 * root.u;
-            width: 100 * root.u;
-            height: 100 * root.u;
+            width: root.lamp-arrow * root.u;
+            height: root.lamp-arrow * root.u;
             u: root.u;
             plate: root.plate;
             source: @image-url("icons/PlayArrow.svg");
@@ -134,10 +157,10 @@ export component Dashboard inherits Rectangle {
             blink: true;
         }
         Lamp {
-            x: root.left + (1210 - 100) * root.u;
+            x: root.left + (1210 - root.lamp-arrow) * root.u;
             y: root.top + 1 * root.u;
-            width: 100 * root.u;
-            height: 100 * root.u;
+            width: root.lamp-arrow * root.u;
+            height: root.lamp-arrow * root.u;
             u: root.u;
             plate: root.plate;
             source: @image-url("icons/PlayArrow.svg");
@@ -146,14 +169,13 @@ export component Dashboard inherits Rectangle {
             blink: true;
         }
         row := HorizontalLayout {
-            property <float> lamp: 100;
-            property <float> gap: 24;
-            x: root.left + (640 - 2 * self.lamp - 1.5 * self.gap) * root.u;
-            y: root.top + 1 * root.u;
-            height: self.lamp * root.u;
-            spacing: self.gap * root.u;
+            x: root.left + (640 - (2 * root.lamp-row + 1.5 * root.lamp-gap)) * root.u;
+            y: root.lamp-y;
+            height: root.lamp-row * root.u;
+            spacing: root.lamp-gap * root.u;
             Lamp {
-                width: row.lamp * root.u;
+                width: root.lamp-row * root.u;
+                height: root.lamp-row * root.u;
                 u: root.u;
                 plate: root.plate;
                 source: @image-url("icons/TelltaleLowBeam.svg");
@@ -161,7 +183,8 @@ export component Dashboard inherits Rectangle {
                 active: DashState.lights;
             }
             Lamp {
-                width: row.lamp * root.u;
+                width: root.lamp-row * root.u;
+                height: root.lamp-row * root.u;
                 u: root.u;
                 plate: root.plate;
                 source: @image-url("icons/TelltaleHighBeam.svg");
@@ -169,7 +192,8 @@ export component Dashboard inherits Rectangle {
                 active: DashState.high-beam;
             }
             Lamp {
-                width: row.lamp * root.u;
+                width: root.lamp-row * root.u;
+                height: root.lamp-row * root.u;
                 u: root.u;
                 plate: root.plate;
                 source: @image-url("icons/TelltaleHazard.svg");
@@ -178,17 +202,18 @@ export component Dashboard inherits Rectangle {
                 blink: true;
             }
             Rectangle {
-                width: row.lamp * root.u;
-                background: root.plate;
+                width: root.lamp-row * root.u;
+                height: root.lamp-row * root.u;
+                background: DashState.scooter ? root.plate : transparent;
                 border-radius: min(self.width, self.height) * 0.18;
                 Image {
-                    x: parent.width * 0.05;
-                    y: parent.height * 0.05;
-                    width: parent.width * 0.9;
-                    height: parent.height * 0.9;
+                    x: DashState.scooter ? parent.width * 0.05 : 0;
+                    y: DashState.scooter ? parent.height * 0.05 : 0;
+                    width: DashState.scooter ? parent.width * 0.9 : parent.width;
+                    height: DashState.scooter ? parent.height * 0.9 : parent.height;
                     source: @image-url("icons/TelltaleParkingRing.svg");
                     colorize: Signal.red;
-                    opacity: DashState.parking-brake ? 1 : 0.3;
+                    opacity: DashState.parking-brake ? 1 : (DashState.scooter ? 0.3 : 0);
                 }
                 Text {
                     width: parent.width;
@@ -196,15 +221,25 @@ export component Dashboard inherits Rectangle {
                     vertical-alignment: center;
                     horizontal-alignment: center;
                     text: "P";
-                    font-size: 9.5 / 24 * row.lamp * root.u;
+                    font-size: 9.5 / 24 * root.lamp-row * root.u;
                     font-weight: 700;
                     color: Signal.red;
-                    opacity: DashState.parking-brake ? 1 : 0.3;
+                    opacity: DashState.parking-brake ? 1 : (DashState.scooter ? 0.3 : 0);
                 }
             }
         }
+        if DashState.scooter && DashState.drive-level != 0: DriveLevels {
+            x: round((root.left + (640 - root.level-w / 2) * root.u) / 1phx) * 1phx;
+            y: root.lamp-y + (root.lamp-row + 8) * root.u;
+            width: root.level-w * root.u;
+            height: root.level-cell * root.u;
+            u: root.u;
+            cell: root.level-cell * root.u;
+            cell-gap: root.level-gap * root.u;
+            level: DashState.drive-level;
+        }
         if DashState.ambient != "": Text {
-            x: root.left + (1210 - 100 - 24) * root.u - self.width;
+            x: root.left + (1210 - root.lamp-arrow - (DashState.scooter ? 24 : 42)) * root.u - self.width;
             y: root.top + 27 * root.u - self.height / 2;
             text: DashState.ambient;
             font-size: 20 * root.u;
