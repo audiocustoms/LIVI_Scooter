@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional terms: see NOTICE
 
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -116,6 +116,23 @@ pub struct Rf {
     pub jamming_indicator: u8,
 }
 
+/// One position rate the receiver was measured to deliver, with the slowest
+/// baud rate that carries it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rate {
+    pub rate_ms: u32,
+    pub baud_rate: u32,
+}
+
+/// What the connected receiver turned out to be able to do.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Caps {
+    pub baud_rates: Vec<u32>,
+    pub rates: Vec<Rate>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GnssInfo {
@@ -161,6 +178,9 @@ pub struct GnssInfo {
     pub updated_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
+    /// Filled once the receiver has been asked what it can do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caps: Option<Caps>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

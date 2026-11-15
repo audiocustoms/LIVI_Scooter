@@ -33,6 +33,14 @@ export component Dashboard inherits Rectangle {
     property <float> level-cell: 64;
     property <float> level-gap: 14;
     property <float> level-w: 3 * root.level-cell + 2 * root.level-gap;
+    /// The GPS badge in the bottom left corner.
+    property <length> gps-w: 210 * root.u;
+    property <length> gps-h: 56 * root.u;
+    property <length> gps-pad: 10 * root.u;
+    /// The clock in the bottom right corner, showing time and date.
+    property <length> clock-w: 224 * root.u;
+    property <length> clock-h: 34 * root.u;
+    property <length> clock-pad: 10 * root.u;
     /// How far each readout moves towards the middle of the screen, so its plate
     /// stops covering the ticks of the ring beside it. Both move by the same
     /// amount, which keeps the pair symmetrical.
@@ -246,6 +254,71 @@ export component Dashboard inherits Rectangle {
             font-weight: 500;
             letter-spacing: 0.5 * root.u;
             color: Theme.text;
+        }
+
+        // The receiver's state in the bottom left corner, while GPS is on: a fix
+        // or none, the satellites it uses of those it sees, and the position.
+        // A car keeps its oil row down there, so the badge sits above it.
+        if DashState.gps-shown: Rectangle {
+            x: root.left + 10 * root.u;
+            y: root.top + (DashState.scooter ? 654 : 590) * root.u;
+            width: root.gps-w;
+            height: root.gps-h;
+            border-radius: 10 * root.u;
+            background: DashState.map ? root.plate : transparent;
+            VerticalLayout {
+                x: root.gps-pad;
+                y: root.gps-pad;
+                width: root.gps-w - 2 * root.gps-pad;
+                height: root.gps-h - 2 * root.gps-pad;
+                spacing: 1 * root.u;
+                HorizontalLayout {
+                    spacing: 10 * root.u;
+                    Text {
+                        text: DashState.gps-fix ? "FIX" : "NO FIX";
+                        color: DashState.gps-fix ? Signal.green : Signal.red;
+                        font-size: 19 * root.u;
+                        font-weight: 700;
+                        letter-spacing: 1 * root.u;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: DashState.gps-satellites;
+                        color: Theme.text-secondary.with-alpha(0.85);
+                        font-size: 19 * root.u;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: DashState.gps-position;
+                    color: Theme.text-secondary.with-alpha(0.7);
+                    font-size: 17 * root.u;
+                    letter-spacing: 0.5 * root.u;
+                }
+            }
+        }
+
+        // The clock in the bottom right corner. A car keeps its fuel row down
+        // there, so the clock sits above it.
+        if DashState.clock-corner != "": Rectangle {
+            x: root.left + 1270 * root.u - self.width;
+            y: root.top + (DashState.scooter ? 676 : 612) * root.u;
+            width: root.clock-w;
+            height: root.clock-h;
+            border-radius: 10 * root.u;
+            background: DashState.map ? root.plate : transparent;
+            Text {
+                x: root.clock-pad;
+                width: root.clock-w - 2 * root.clock-pad;
+                height: root.clock-h;
+                text: DashState.clock-corner;
+                color: Theme.text;
+                font-size: 20 * root.u;
+                font-weight: 500;
+                letter-spacing: 0.5 * root.u;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
         }
 
         if !DashState.scooter: Level {

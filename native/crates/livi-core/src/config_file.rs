@@ -21,7 +21,7 @@ pub struct HostFacts {
 }
 
 pub struct ConfigFile {
-    path: PathBuf,
+    pub path: PathBuf,
     backup: PathBuf,
 }
 

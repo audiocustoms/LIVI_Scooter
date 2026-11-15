@@ -116,6 +116,35 @@ pub fn schema() -> Node {
             .display_value()
             .page(Label::new("settings.carType", "Fuel Type")),
             Node::select(
+                Label::new("settings.speedSource", "Speed Source"),
+                "speedSource",
+                vec![
+                    choice(
+                        Label::new("settings.speedSourceObd", "OBD-II"),
+                        OptionValue::Text("obd"),
+                    ),
+                    choice(
+                        Label::new("settings.speedSourceCan", "CAN"),
+                        OptionValue::Text("can"),
+                    ),
+                    choice(
+                        Label::new("settings.speedSourceOneWire", "OneWire"),
+                        OptionValue::Text("oneWire"),
+                    ),
+                    choice(
+                        Label::new("settings.speedSourceHall", "Hall Sensor"),
+                        OptionValue::Text("hall"),
+                    ),
+                    choice(
+                        Label::new("settings.speedSourceGps", "GPS (internal)"),
+                        OptionValue::Text("gps"),
+                    ),
+                ],
+            )
+            .icon("speedSource")
+            .display_value()
+            .page(Label::new("settings.speedSource", "Speed Source")),
+            Node::select(
                 Label::new("settings.steeringWheelPosition", "Steering wheel position"),
                 "hand",
                 vec![

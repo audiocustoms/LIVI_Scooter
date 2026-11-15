@@ -42,6 +42,16 @@ pub enum Turn {
     Right,
 }
 
+/// What the corner of the dashboard reports about the receiver, while GPS is on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpsBadge {
+    pub fix: bool,
+    /// Satellites used, then the ones in view, e.g. `7 / 11`.
+    pub satellites: String,
+    /// Decimal degrees, four places, or `—` before the first fix.
+    pub position: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Readings {
     pub enabled: bool,
@@ -76,6 +86,9 @@ pub struct Readings {
     pub battery_wh: Option<f64>,
     /// Pack voltage as measured by the pack monitor, in volts.
     pub pack_voltage: Option<f64>,
+    /// The receiver's state for the corner of the screen, `None` while GPS is
+    /// switched off in the menu.
+    pub gps: Option<GpsBadge>,
     pub scooter: bool,
     /// Draw the development stand-in map instead of the projection stream.
     pub dev_fake_map: bool,
@@ -125,6 +138,34 @@ pub fn gear(v: &Value) -> String {
         "SPORT" => "S".into(),
         _ => s,
     }
+}
+
+/// The corner readout: whether the receiver has a fix, how many satellites it
+/// uses of those it sees, and where it last put us. `None` while GPS is off.
+fn gps_badge(state: &State) -> Option<GpsBadge> {
+    if !state.config.gps_enabled {
+        return None;
+    }
+    let none = Value::Null;
+    let gnss = state.telemetry.get("gnss").unwrap_or(&none);
+    let fix = gnss["fixMode"].as_str().is_some_and(|mode| mode != "none")
+        || gnss["fixQuality"]
+            .as_str()
+            .is_some_and(|quality| quality != "none");
+    let used = gnss["satellitesUsed"].as_f64().unwrap_or(0.0).round() as i64;
+    let visible = gnss["satellitesVisible"].as_u64().unwrap_or(0);
+    let last = state.telemetry.get("gps").unwrap_or(&none);
+    // Without a fix the last known position is stale, so show a dash instead of
+    // coordinates the receiver cannot currently back up.
+    let position = match (fix, last["lat"].as_f64(), last["lng"].as_f64()) {
+        (true, Some(lat), Some(lng)) => format!("{lat:.4}, {lng:.4}"),
+        _ => "—".to_string(),
+    };
+    Some(GpsBadge {
+        fix,
+        satellites: format!("{used} / {visible}"),
+        position,
+    })
 }
 
 fn temperature(c: f64, unit: TemperatureUnit) -> f64 {
@@ -232,6 +273,7 @@ pub fn readings(state: &State, screen: Screen) -> Readings {
         battery_scale,
         battery_wh,
         pack_voltage: num("packVoltage"),
+        gps: gps_badge(state),
         scooter: c.car_type == Some(CarType::Scooter),
         dev_fake_map: c.dev_fake_map,
         oil_text: format!("{}°", temperature(oil, temp_unit).round()),
@@ -431,5 +473,47 @@ mod tests {
             json!({ "carType": 1, "speedUnit": "kmh" }),
         );
         assert!(readings(&s, Screen::Main).speed_markers.is_empty());
+    }
+
+    #[test]
+    fn the_gps_badge_reports_fix_satellites_and_position() {
+        let s = state(
+            json!({
+                "gps": { "lat": 48.3871055, "lng": 9.973609, "speedMs": 12.0 },
+                "gnss": {
+                    "connected": true, "fixMode": "3d", "fixQuality": "gps",
+                    "satellitesUsed": 7, "satellitesVisible": 11
+                }
+            }),
+            json!({ "carType": 13, "gpsEnabled": true }),
+        );
+        let badge = readings(&s, Screen::Main).gps.expect("gps is on");
+        assert!(badge.fix);
+        assert_eq!(badge.satellites, "7 / 11");
+        assert_eq!(badge.position, "48.3871, 9.9736", "four places, decimal");
+    }
+
+    #[test]
+    fn without_a_fix_the_badge_says_so() {
+        let s = state(
+            json!({
+                "gps": { "lat": 48.3871055, "lng": 9.973609 },
+                "gnss": { "connected": true, "fixMode": "none", "satellitesVisible": 11 }
+            }),
+            json!({ "carType": 13, "gpsEnabled": true }),
+        );
+        let badge = readings(&s, Screen::Main).gps.expect("gps is on");
+        assert!(!badge.fix);
+        assert_eq!(badge.satellites, "0 / 11");
+        assert_eq!(badge.position, "—", "a stale position is not shown");
+    }
+
+    #[test]
+    fn gps_switched_off_leaves_no_badge() {
+        let s = state(
+            json!({ "gnss": { "connected": true, "fixMode": "3d", "satellitesUsed": 7 } }),
+            json!({ "carType": 1, "gpsEnabled": false }),
+        );
+        assert!(readings(&s, Screen::Main).gps.is_none());
     }
 }

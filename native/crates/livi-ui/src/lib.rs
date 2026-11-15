@@ -450,6 +450,8 @@ pub fn run(
     ui.set_bands(ModelRc::from(Rc::new(VecModel::from(vec![0.0f32; BANDS]))));
     ui.set_clock(clock::now_text().into());
     ui.global::<DashState>().set_clock(clock::now_text().into());
+    ui.global::<DashState>()
+        .set_clock_corner(clock::corner_text().into());
 
     let mut _peer = None;
     let stream = if fixture.is_some() {
@@ -487,6 +489,8 @@ pub fn run(
             if let Some(ui) = weak.upgrade() {
                 ui.set_clock(clock::now_text().into());
                 ui.global::<DashState>().set_clock(clock::now_text().into());
+                ui.global::<DashState>()
+                    .set_clock_corner(clock::corner_text().into());
                 secondary::tick_clock(&clock::now_text());
             }
         }

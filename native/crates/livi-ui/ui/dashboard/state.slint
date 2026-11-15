@@ -63,6 +63,11 @@ export global DashState {
     in property <float> speed-t;
     /// Where the speed markers sit on the scale, 0..1 each. Empty for none.
     in property <[float]> speed-markers;
+    /// The receiver readout in the bottom left corner, shown while GPS is on.
+    in property <bool> gps-shown;
+    in property <bool> gps-fix;
+    in property <string> gps-satellites;
+    in property <string> gps-position;
     in property <float> rpm-t;
     in property <float> ring-shift;
     in property <string> speed-text: "0";
@@ -96,6 +101,7 @@ export global DashState {
     in property <int> page-index;
     in-out property <bool> dots-shown: true;
     in property <string> clock;
+    in property <string> clock-corner;
     in property <bool> nav-active;
     in property <image> nav-icon;
     in property <bool> nav-has-image;

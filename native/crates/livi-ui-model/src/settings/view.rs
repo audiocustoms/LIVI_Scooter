@@ -265,6 +265,7 @@ fn choices(node: &Node, state: &Value, t: &Strings) -> Vec<Offer> {
         label: label(t, &c.label),
         value: option_value(&c.value),
         offline: false,
+        also: Vec::new(),
     });
     let mut out: Vec<Offer> = fixed.collect();
     if let Some(src) = source {
@@ -600,6 +601,9 @@ impl Settings {
             return Vec::new();
         };
         let mut out = vec![Change::Config(patch(node.path, o.value.clone()))];
+        for (path, value) in &o.also {
+            out.push(Change::Config(patch(path, value.clone())));
+        }
         if let Some(p) = label_path {
             out.push(Change::Config(patch(p, Value::from(o.label))));
         }
@@ -692,6 +696,92 @@ mod tests {
         assert_eq!(typed_number("abc"), None);
         assert_eq!(typed_number("inf"), None);
         assert_eq!(number_text(1080.0), "1080");
+    }
+
+    #[test]
+    fn a_position_rate_takes_its_baud_rate_with_it() {
+        let s = Settings::new(schema());
+        let Some(stack) = s.find(&["general", "gps", "gpsPositionRateMs"]) else {
+            panic!("the position rate is under gps");
+        };
+        let state = json!({
+            "config": { "gpsBaudRate": 9600, "gpsPositionRateMs": 1000 },
+            "telemetry": { "gnss": { "caps": { "baudRates": [9600, 19200], "rates": [
+                { "rateMs": 1000, "baudRate": 9600 },
+                { "rateMs": 200, "baudRate": 19200 }
+            ] } } }
+        });
+        let changes = s.pick(&stack, 1, &state, &Strings::default());
+        assert_eq!(
+            changes,
+            vec![
+                Change::Config(json!({ "gpsPositionRateMs": 200 })),
+                Change::Config(json!({ "gpsBaudRate": 19200 })),
+            ],
+            "the rate and the line it needs are one choice"
+        );
+        let Some(Screen::Select { options, .. }) = s.screen(&stack, &state, &Strings::default())
+        else {
+            panic!("the position rate is a select");
+        };
+        let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["1 Hz · 9600 baud", "5 Hz · 19200 baud"]);
+        assert!(options[0].selected, "the configured rate is marked");
+        assert!(!options[1].selected);
+    }
+
+    #[test]
+    fn without_a_receiver_the_position_rate_offers_nothing() {
+        let s = Settings::new(schema());
+        let Some(stack) = s.find(&["general", "gps", "gpsPositionRateMs"]) else {
+            panic!("the position rate is under gps");
+        };
+        let state = json!({ "config": { "gpsPositionRateMs": 1000 } });
+        let Some(Screen::Select { options, .. }) = s.screen(&stack, &state, &Strings::default())
+        else {
+            panic!("the position rate is a select");
+        };
+        assert!(
+            options.is_empty(),
+            "nothing is known about the receiver yet"
+        );
+    }
+
+    #[test]
+    fn the_speed_source_sits_under_the_fuel_type() {
+        let s = Settings::new(schema());
+        let Some(stack) = s.find(&["car", "speedSource"]) else {
+            panic!("the speed source is under car");
+        };
+        let Some(parent) = s.node(&stack[..stack.len() - 1]) else {
+            panic!("the car page exists");
+        };
+        let paths: Vec<&str> = parent.children().iter().map(|c| c.path).collect();
+        assert_eq!(
+            paths.get(..2),
+            Some(&["carType", "speedSource"][..]),
+            "right below the fuel type"
+        );
+
+        let state = json!({ "config": { "speedSource": "gps" } });
+        let Some(Screen::Select { options, .. }) = s.screen(&stack, &state, &Strings::default())
+        else {
+            panic!("the speed source is a select");
+        };
+        let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["OBD-II", "CAN", "OneWire", "Hall Sensor", "GPS (internal)"]
+        );
+        assert!(
+            options[4].selected,
+            "GPS is the source out of the box, so it is the one marked"
+        );
+        let changes = s.pick(&stack, 1, &state, &Strings::default());
+        assert_eq!(
+            changes,
+            vec![Change::Config(json!({ "speedSource": "can" }))]
+        );
     }
 
     #[test]

@@ -338,6 +338,12 @@ pub fn fill(d: &DashState<'_>, mut v: DashView) {
     d.set_speed_label(r.speed_label.into());
     d.set_speed_note(r.odometer.clone().into());
     d.set_drive_level(i32::from(r.drive_level));
+    d.set_gps_shown(r.gps.is_some());
+    if let Some(gps) = &r.gps {
+        d.set_gps_fix(gps.fix);
+        d.set_gps_satellites(gps.satellites.clone().into());
+        d.set_gps_position(gps.position.clone().into());
+    }
     d.set_gear(r.gear.clone().into());
     d.set_charge_text(charge_text(r.fuel).into());
     // Without a measurement there is nothing to show but the label, which is

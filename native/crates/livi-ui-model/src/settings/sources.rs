@@ -18,6 +18,9 @@ pub struct Offer {
     pub label: String,
     pub value: Value,
     pub offline: bool,
+    /// Further config keys this choice writes, e.g. the baud rate that belongs
+    /// to a position rate.
+    pub also: Vec<(&'static str, Value)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,6 +87,7 @@ fn plain(label: impl Into<String>, value: Value) -> Offer {
         label: label.into(),
         value,
         offline: false,
+        also: Vec::new(),
     }
 }
 
@@ -131,6 +135,7 @@ pub fn offers(source: OptionSource, state: &Value, t: &Strings) -> Vec<Offer> {
                     label: d["name"].as_str().unwrap_or("").to_string(),
                     value: d["id"].clone(),
                     offline: d["offline"].as_bool().unwrap_or(false),
+                    also: Vec::new(),
                 })
                 .collect()
         }
@@ -221,7 +226,43 @@ pub fn offers(source: OptionSource, state: &Value, t: &Strings) -> Vec<Offer> {
             .map(|db| plain(format!("{db:.1} dB"), Value::from(db)))
             .collect(),
         OptionSource::SpeedMarker(path) => speed_marker(&state["config"], t, path),
+        OptionSource::GnssRates => gnss_rates(&state["telemetry"]["gnss"]),
     }
+}
+
+/// The position rates the connected receiver was measured to deliver. Each one
+/// carries the baud rate that goes with it, because a faster fix needs a faster
+/// line and the two are only ever changed together.
+fn gnss_rates(gnss: &Value) -> Vec<Offer> {
+    gnss["caps"]["rates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|rate| {
+            let rate_ms = rate["rateMs"].as_u64()?;
+            let baud_rate = rate["baudRate"].as_u64()?;
+            Some(Offer {
+                label: rate_label(rate_ms, baud_rate),
+                value: Value::from(rate_ms),
+                offline: false,
+                also: vec![("gpsBaudRate", Value::from(baud_rate))],
+            })
+        })
+        .collect()
+}
+
+fn rate_label(rate_ms: u64, baud_rate: u64) -> String {
+    let hz = if rate_ms == 0 {
+        0.0
+    } else {
+        1000.0 / rate_ms as f64
+    };
+    let text = if (hz - hz.round()).abs() < 0.05 {
+        format!("{} Hz", hz.round() as u64)
+    } else {
+        format!("{hz:.1} Hz")
+    };
+    format!("{text} · {baud_rate} baud")
 }
 
 /// The selectable marks on the speed scale: `0` (off) and then 5-unit steps up to

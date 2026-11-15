@@ -5,15 +5,17 @@
 mod clock;
 mod nmea;
 mod port;
+mod probe;
 mod receiver;
 pub mod timezone;
 mod tz_data;
 mod ubx;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use livi_core_proto::config::Config;
+use livi_core_proto::config::{Config, SpeedSource};
 use livi_core_proto::gnss as info;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -22,11 +24,16 @@ use tokio::time::Instant;
 
 use crate::server::Core;
 use clock::{Clock, Step};
-use info::{GnssInfo, GpsFix};
+use info::{Caps, GnssInfo, GpsFix};
 use port::{Chunk, Port};
 use receiver::{DEFAULT_BAUD_RATE, DEFAULT_DEVICE, Output, Poll, Receiver};
 
 const SET_TIME_HELPER: &str = "/usr/local/lib/livi/livi-set-time.sh";
+/// How long to wait before asking a receiver again that did not answer.
+const PROBE_RETRY: std::time::Duration = std::time::Duration::from_secs(120);
+/// How long an open port may stay silent before the receiver is looked for
+/// again, on every baud rate.
+const SILENT_RECOVER: std::time::Duration = std::time::Duration::from_secs(12);
 
 fn latin1(bytes: &[u8]) -> String {
     bytes.iter().copied().map(char::from).collect()
@@ -63,6 +70,8 @@ struct Settings {
     enabled: bool,
     device: String,
     baud_rate: u32,
+    rate_ms: u32,
+    speed_source: SpeedSource,
 }
 
 impl Settings {
@@ -71,6 +80,8 @@ impl Settings {
             enabled: config.gps_enabled,
             device: config.gps_device.clone(),
             baud_rate: config.gps_baud_rate,
+            rate_ms: config.gps_position_rate_ms,
+            speed_source: config.speed_source,
         }
     }
 }
@@ -92,13 +103,35 @@ struct Gnss {
     port: Option<Port>,
     device: String,
     baud_rate: u32,
+    rate_ms: u32,
+    caps: Option<Caps>,
+    caps_file: PathBuf,
+    /// The settings in force, so the receiver can be paused and resumed around
+    /// a probe without losing them.
+    settings: Settings,
+    /// When to try asking the receiver again, after an attempt found nothing.
+    probe_after: Option<Instant>,
+    /// Set while the port is open but nothing has arrived on it yet.
+    silent_since: Option<Instant>,
+    /// The speed last handed to the telemetry store, so an unchanged reading
+    /// does not go out again ten times a second.
+    last_speed: Option<f64>,
+    /// Whether the receiver had data before, to notice it going away.
+    was_receiving: bool,
+    /// Set while a fresh port still has to be told the position rate.
+    pending_rate: Option<u32>,
     timezone: Option<String>,
     zone_key: String,
     jobs: Vec<Job>,
 }
 
 impl Gnss {
-    fn new(telemetry: mpsc::UnboundedSender<Value>, open: Opener, clock: Clock) -> Self {
+    fn new(
+        telemetry: mpsc::UnboundedSender<Value>,
+        open: Opener,
+        clock: Clock,
+        caps_file: PathBuf,
+    ) -> Self {
         Self {
             telemetry,
             open,
@@ -107,6 +140,21 @@ impl Gnss {
             port: None,
             device: String::new(),
             baud_rate: 0,
+            rate_ms: 0,
+            caps: None,
+            caps_file,
+            settings: Settings {
+                enabled: false,
+                device: String::new(),
+                baud_rate: 0,
+                rate_ms: 0,
+                speed_source: SpeedSource::Gps,
+            },
+            probe_after: None,
+            silent_since: None,
+            last_speed: None,
+            was_receiving: false,
+            pending_rate: None,
             timezone: None,
             zone_key: String::new(),
             jobs: Vec::new(),
@@ -122,6 +170,13 @@ impl Gnss {
     }
 
     fn apply(&mut self, settings: &Settings, now: Moment) {
+        let source_changed = self.settings.speed_source != settings.speed_source;
+        self.settings = settings.clone();
+        if source_changed {
+            // A speed the old source left behind must not stay on the dial.
+            self.last_speed = None;
+            self.publish_speed(0.0);
+        }
         if !settings.enabled {
             self.stop_receiver(now);
             return;
@@ -136,16 +191,101 @@ impl Gnss {
         } else {
             settings.baud_rate
         };
-        if self.receiver.is_some() && device == self.device && baud_rate == self.baud_rate {
+        let same_device = device == self.device;
+        if self.receiver.is_some() && same_device && baud_rate == self.baud_rate {
+            // Only the rate can have moved; the receiver keeps its port.
+            if settings.rate_ms != self.rate_ms && settings.rate_ms > 0 {
+                self.tell_rate(settings.rate_ms);
+            }
+            self.rate_ms = settings.rate_ms;
             return;
+        }
+        // The module has to change line before the port goes away, or nothing
+        // would ever reach it on the new one.
+        if same_device && baud_rate != self.baud_rate && self.port.is_some() {
+            self.tell_baud(baud_rate);
         }
         self.stop_receiver(now);
         self.device = device.to_string();
         self.baud_rate = baud_rate;
+        self.rate_ms = settings.rate_ms;
+        if !same_device {
+            self.caps = None;
+            self.probe_after = None;
+        }
+        self.ensure_caps();
         let mut receiver = Receiver::new(device, baud_rate);
+        receiver.set_caps(self.caps.clone());
         receiver.start();
+        self.pending_rate = (settings.rate_ms > 0).then_some(settings.rate_ms);
         self.receiver = Some(receiver);
         self.pump(now);
+    }
+
+    /// Asks the receiver what it can do, once: the answer is kept on disk and
+    /// reused for as long as it is the same device. Only the cache is read here;
+    /// probing talks to the port and runs off the runtime, see `ask`.
+    fn ensure_caps(&mut self) {
+        if self.caps.is_none() {
+            self.caps = probe::cached(&self.caps_file, &self.device);
+        }
+    }
+
+    /// True when the receiver has not been asked yet, or when it has been open
+    /// for a while without sending anything — which is what a baud rate left
+    /// over from a wrong setting looks like. The last attempt has to be long
+    /// enough ago either way.
+    fn wants_caps(&self, now: Instant) -> bool {
+        if self.receiver.is_none() {
+            return false;
+        }
+        if self.probe_after.is_some_and(|at| at > now) {
+            return false;
+        }
+        self.caps.is_none()
+            || self
+                .silent_since
+                .is_some_and(|since| now.duration_since(since) >= SILENT_RECOVER)
+    }
+
+    /// Closes the port so the probe can have it, and gives it back afterwards.
+    fn pause(&mut self, now: Moment) {
+        self.stop_receiver(now);
+    }
+
+    fn resume(&mut self, now: Moment) {
+        let settings = self.settings.clone();
+        self.apply(&settings, now);
+    }
+
+    /// Tells the open port the new position rate.
+    fn tell_rate(&mut self, rate_ms: u32) {
+        let frame = probe::set_rate(rate_ms);
+        let text = String::from_utf8_lossy(&frame).trim().to_string();
+        match self.port.as_mut() {
+            Some(port) => match port.write(&frame) {
+                Ok(()) => println!("[gnss] sent {text} at {} baud", self.baud_rate),
+                Err(e) => eprintln!("[gnss] {text} not sent: {e}"),
+            },
+            None => eprintln!("[gnss] {text} not sent: port is closed"),
+        }
+    }
+
+    /// Moves the module to another baud rate while the old port still works.
+    fn tell_baud(&mut self, baud_rate: u32) {
+        let Some(frame) = probe::set_baud(baud_rate) else {
+            return;
+        };
+        let text = String::from_utf8_lossy(&frame).trim().to_string();
+        match self.port.as_mut() {
+            Some(port) => match port.write(&frame) {
+                Ok(()) => println!("[gnss] sent {text} at {} baud", self.baud_rate),
+                Err(e) => eprintln!("[gnss] {text} not sent: {e}"),
+            },
+            None => eprintln!("[gnss] {text} not sent: port is closed"),
+        }
+        // The frame needs a moment on the wire before the port goes away.
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 
     fn stop_receiver(&mut self, now: Moment) {
@@ -158,6 +298,7 @@ impl Gnss {
         let info = GnssInfo {
             device: Some(self.device.clone()),
             baud_rate: Some(self.baud_rate),
+            caps: self.caps.clone(),
             ..Default::default()
         };
         self.on_info(info, now);
@@ -168,7 +309,10 @@ impl Gnss {
             return;
         };
         match chunk {
-            Some(Ok(bytes)) => receiver.data(&bytes, now.at, now.unix_ms),
+            Some(Ok(bytes)) => {
+                self.silent_since = None;
+                receiver.data(&bytes, now.at, now.unix_ms);
+            }
             Some(Err(reason)) => receiver.failed(reason, now.at),
             None => receiver.failed(format!("{} closed", self.device), now.at),
         }
@@ -223,6 +367,10 @@ impl Gnss {
                     Ok(port) => {
                         self.port = Some(port);
                         receiver.opened(now.at);
+                        self.silent_since = Some(now.at);
+                        if let Some(rate_ms) = self.pending_rate.take() {
+                            self.tell_rate(rate_ms);
+                        }
                     }
                     Err(reason) => receiver.failed(reason, now.at),
                 }
@@ -249,6 +397,13 @@ impl Gnss {
     }
 
     fn on_info(&mut self, mut info: GnssInfo, now: Moment) {
+        if info.connected {
+            self.was_receiving = true;
+        } else if self.was_receiving {
+            // The receiver went away, so its last speed is not the car's.
+            self.was_receiving = false;
+            self.publish_speed(0.0);
+        }
         info.timezone = self.timezone.clone();
         let _ = self.telemetry.send(json!({ "gnss": to_json(&info) }));
         if let Some(step) = self.clock.update(&info, now.unix_ms as i64) {
@@ -256,7 +411,31 @@ impl Gnss {
         }
     }
 
+    /// Hands a speed to the telemetry store, which is what the dashboard and
+    /// both phone projections read. Only the GPS source fills it for now; the
+    /// others are place holders and leave the value alone.
+    fn publish_speed(&mut self, kmh: f64) {
+        if self.settings.speed_source != SpeedSource::Gps {
+            return;
+        }
+        // Below walking pace a fix carries nothing but noise, and a tenth of a
+        // km/h is finer than the receiver resolves anyway.
+        let kmh = if kmh.is_finite() && kmh >= 1.0 {
+            (kmh * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+        if self.last_speed == Some(kmh) {
+            return;
+        }
+        self.last_speed = Some(kmh);
+        let _ = self.telemetry.send(json!({ "speedKph": kmh }));
+    }
+
     fn publish_fix(&mut self, fix: GpsFix) {
+        if let Some(seconds) = fix.speed_ms {
+            self.publish_speed(seconds * 3.6);
+        }
         if let (Some(lat), Some(lng)) = (fix.lat, fix.lng) {
             let key = format!("{lat:.2},{lng:.2}");
             if key != self.zone_key {
@@ -304,6 +483,42 @@ async fn carry_out_job(core: &Core, job: Job) {
     }
 }
 
+/// Asks the receiver what it can do. Runs on a blocking thread: it holds the
+/// port for half a minute and must not stall the runtime.
+async fn ask(gnss: &mut Gnss, now: Moment) {
+    if !gnss.wants_caps(now.at) {
+        return;
+    }
+    let device = gnss.device.clone();
+    let baud_rate = gnss.baud_rate;
+    let rate_ms = gnss.settings.rate_ms.max(1000);
+    let caps_file = gnss.caps_file.clone();
+    gnss.pause(now);
+    println!("[gnss] asking {device} what it supports");
+    let found =
+        tokio::task::spawn_blocking(move || probe::detect(&device, baud_rate, rate_ms)).await;
+    match found {
+        Ok(Ok(caps)) => {
+            println!(
+                "[gnss] {} baud rates, {} position rates",
+                caps.baud_rates.len(),
+                caps.rates.len()
+            );
+            probe::remember(&caps_file, &gnss.device, &caps);
+            gnss.caps = Some(caps);
+        }
+        Ok(Err(e)) => {
+            eprintln!("[gnss] could not ask the receiver: {e}");
+            gnss.probe_after = Some(now.at + PROBE_RETRY);
+        }
+        Err(e) => {
+            eprintln!("[gnss] probe task failed: {e}");
+            gnss.probe_after = Some(now.at + PROBE_RETRY);
+        }
+    }
+    gnss.resume(now);
+}
+
 pub async fn run(core: Arc<Core>, telemetry: mpsc::UnboundedSender<Value>) {
     if !cfg!(target_os = "linux") {
         return;
@@ -315,12 +530,14 @@ pub async fn run(core: Arc<Core>, telemetry: mpsc::UnboundedSender<Value>) {
         telemetry,
         Box::new(Port::open),
         Clock::new(clock::CLAIM_FILE),
+        core.config_path().with_file_name("gnss-caps.json"),
     );
     gnss.begin(&config, Moment::now());
     loop {
         for job in gnss.take_jobs() {
             carry_out_job(&core, job).await;
         }
+        ask(&mut gnss, Moment::now()).await;
         let wake = gnss.next_deadline();
         tokio::select! {
             changed = state.changed() => {
@@ -372,7 +589,13 @@ mod tests {
                 seen.lock().unwrap().push((device.to_string(), baud_rate));
                 Ok(Port::fake(mpsc::unbounded_channel().1))
             });
-            let gnss = Gnss::new(tx, open, Clock::new(dir.0.join("claim")));
+            let caps_file = dir.0.join("caps.json");
+            // Pre-seeded so a test never probes a real serial port.
+            let _ = std::fs::write(
+                &caps_file,
+                r#"{"device":"/dev/ttyAMA0","caps":{"baudRates":[38400],"rates":[]}}"#,
+            );
+            let gnss = Gnss::new(tx, open, Clock::new(dir.0.join("claim")), caps_file);
             let now = Moment {
                 at: Instant::now(),
                 unix_ms: 1_774_269_319_000,
@@ -448,6 +671,8 @@ mod tests {
                 enabled,
                 device: device.into(),
                 baud_rate,
+                rate_ms: 1000,
+                speed_source: SpeedSource::Gps,
             };
             self.gnss.apply(&settings, self.now);
         }
@@ -492,6 +717,43 @@ mod tests {
     }
 
     #[test]
+    fn the_fix_supplies_the_speed_when_gps_is_the_source() {
+        let mut rig = Rig::enabled();
+        rig.feed(&[GGA, GSA, RMC].concat());
+        let speed = rig
+            .sent()
+            .into_iter()
+            .find_map(|m| m.get("speedKph").cloned());
+        assert_eq!(speed, Some(json!(41.5)), "22.4 knots over ground");
+    }
+
+    #[test]
+    fn another_source_leaves_the_speed_alone() {
+        let mut rig = Rig::new(&Config {
+            gps_enabled: true,
+            speed_source: SpeedSource::Can,
+            ..defaults()
+        });
+        rig.feed(&[GGA, GSA, RMC].concat());
+        assert!(
+            rig.sent().iter().all(|m| m.get("speedKph").is_none()),
+            "a bus source fills the speed, not the receiver"
+        );
+    }
+
+    #[test]
+    fn a_standstill_fix_does_not_wobble_the_dial() {
+        let mut rig = Rig::enabled();
+        let stopped = b"$GPRMC,123520.00,A,4807.038,N,01131.000,E,0.08,084.4,230326,,,A*6D\r\n";
+        rig.feed(&[GGA, GSA, stopped].concat());
+        let speed = rig
+            .sent()
+            .into_iter()
+            .find_map(|m| m.get("speedKph").cloned());
+        assert_eq!(speed, Some(json!(0.0)), "0.08 knots is noise, not a speed");
+    }
+
+    #[test]
     fn turning_gps_off_stops_the_receiver_and_reports_it_once() {
         let mut rig = Rig::enabled();
         rig.feed(&[GGA, GSA, RMC].concat());
@@ -502,9 +764,14 @@ mod tests {
         assert!(rig.gnss.receiver.is_none() && rig.gnss.port.is_none());
         assert!(!rig.dir.0.join("claim").exists());
         let sent = rig.sent();
-        assert_eq!(sent.len(), 1);
         assert_eq!(
-            sent[0]["gnss"],
+            sent.len(),
+            2,
+            "the speed goes to zero and the state is reported"
+        );
+        assert_eq!(sent[0], json!({ "speedKph": 0.0 }));
+        assert_eq!(
+            sent[1]["gnss"],
             json!({
                 "connected": false,
                 "device": DEFAULT_DEVICE,
@@ -515,6 +782,7 @@ mod tests {
                 "satellitesVisible": 0,
                 "satellites": [],
                 "constellations": [],
+                "caps": { "baudRates": [38400], "rates": [] },
                 "timezone": "Europe/Berlin"
             })
         );
@@ -659,7 +927,12 @@ mod tests {
         let dir = TempDir::new();
         let (tx, mut telemetry) = mpsc::unbounded_channel();
         let open: Opener = Box::new(|device, _| Err(format!("{device} not found")));
-        let mut gnss = Gnss::new(tx, open, Clock::new(dir.0.join("claim")));
+        let mut gnss = Gnss::new(
+            tx,
+            open,
+            Clock::new(dir.0.join("claim")),
+            dir.0.join("caps.json"),
+        );
         gnss.begin(
             &Config {
                 gps_enabled: true,
@@ -679,7 +952,12 @@ mod tests {
         let (feed, chunks) = mpsc::unbounded_channel();
         let mut chunks = Some(chunks);
         let open: Opener = Box::new(move |_, _| Ok(Port::fake(chunks.take().unwrap())));
-        let mut gnss = Gnss::new(tx, open, Clock::new(dir.0.join("claim")));
+        let mut gnss = Gnss::new(
+            tx,
+            open,
+            Clock::new(dir.0.join("claim")),
+            dir.0.join("caps.json"),
+        );
         gnss.begin(
             &Config {
                 gps_enabled: true,

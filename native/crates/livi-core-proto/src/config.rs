@@ -47,9 +47,14 @@ pub struct Config {
     pub cluster_layout: String,
     pub cluster_palettes: std::collections::BTreeMap<String, String>,
 
+    #[serde(default)]
     pub gps_enabled: bool,
     pub gps_device: String,
     pub gps_baud_rate: u32,
+    /// Milliseconds between two fixes. `0` leaves the receiver's own setting
+    /// alone, which is what an unconfigured module keeps.
+    #[serde(default)]
+    pub gps_position_rate_ms: u32,
     pub timezone: String,
 
     pub projection_width: u32,
@@ -99,6 +104,10 @@ pub struct Config {
     pub ev_max_dc_power_kw: Option<f64>,
     pub max_speed_kph: u32,
     pub speed_scale_step: u32,
+    /// Where the speed on the dashboard comes from. `Gps` takes it from the
+    /// receiver's own fix.
+    #[serde(default)]
+    pub speed_source: SpeedSource,
     /// Up to three speeds the scale marks in red, so limits are visible without
     /// reading the number. `0` draws no mark. Stored in km/h like every other
     /// speed here and converted for the scale in use.
@@ -281,6 +290,23 @@ impl AppearanceMode {
 pub enum SpeedUnit {
     Kmh,
     Mph,
+}
+
+/// Where the dashboard's speed comes from.
+///
+/// Only `Gps` is read today: it takes the speed the GNSS receiver puts in every
+/// fix. The others name the sources a bus or a sensor would feed and are place
+/// holders, so a driver can pick one and the setting is already where the
+/// implementation will look.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpeedSource {
+    #[default]
+    Gps,
+    Obd,
+    Can,
+    OneWire,
+    Hall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -582,6 +608,7 @@ pub fn defaults() -> Config {
         gps_enabled: false,
         gps_device: "/dev/ttyAMA0".into(),
         gps_baud_rate: 38400,
+        gps_position_rate_ms: 1000,
         timezone: String::new(),
         projection_width: 1280,
         projection_height: 720,
@@ -622,6 +649,7 @@ pub fn defaults() -> Config {
         ev_max_dc_power_kw: None,
         max_speed_kph: 200,
         speed_scale_step: 40,
+        speed_source: SpeedSource::Gps,
         speed_marker_kph: 0.0,
         speed_marker2_kph: 0.0,
         speed_marker3_kph: 0.0,

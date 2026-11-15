@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::info::{FixMode, FixQuality, GnssInfo, GpsFix, Rf, Satellite, Version};
+use super::info::{Caps, FixMode, FixQuality, GnssInfo, GpsFix, Rf, Satellite, Version};
 use super::nmea::Decoder;
 use super::ubx;
 
@@ -62,6 +62,7 @@ pub struct Receiver {
     accuracy_m: Option<f64>,
     last_error: Option<String>,
     updated_at: Option<u64>,
+    caps: Option<Caps>,
     out: Vec<Output>,
 }
 
@@ -94,8 +95,14 @@ impl Receiver {
             accuracy_m: None,
             last_error: None,
             updated_at: None,
+            caps: None,
             out: Vec::new(),
         }
+    }
+
+    /// What the receiver was found to support, published with the rest.
+    pub fn set_caps(&mut self, caps: Option<Caps>) {
+        self.caps = caps;
     }
 
     pub fn take(&mut self) -> Vec<Output> {
@@ -145,6 +152,7 @@ impl Receiver {
             receiver_time: self.receiver_time,
             updated_at: self.updated_at,
             timezone: None,
+            caps: self.caps.clone(),
         }
     }
 

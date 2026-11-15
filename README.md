@@ -208,6 +208,21 @@ mirrored to `state/gps.json` for external tools.
 
 On a Raspberry Pi 5, `/dev/ttyAMA0` on GPIO 14/15 (PIN 8/10) does not exist until `dtoverlay=uart0` is set in `config.txt`.
 
+On a Raspberry Pi 4 or Zero 2 W the header UART is the mini UART while Bluetooth keeps the PL011, so the
+receiver is `/dev/serial0` and needs `enable_uart=1`. The serial console has to be off as well —
+`console=serial0,115200` in `cmdline.txt` puts kernel output on the same line the receiver talks on. The
+installer enables the UART on GPIO 14/15 either way and points `gpsDevice` at the port the board has.
+
+When the receiver is enabled, LIVI asks it which baud rates and position rates it supports (over the
+`$PCAS01`/`$PCAS02` commands the AT6558 family speaks) and keeps the answer in `gnss-caps.json` next to the
+config. **Position Rate** under GPS then offers only what the receiver was measured to deliver, and picking one
+also sets the baud rate that carries it — a faster fix needs a faster line, so the two only ever change
+together.
+
+With **Speed Source** under Cars on `GPS (internal)` — the default — the speed the receiver reports in its fix
+becomes `speedKph` in the telemetry store, which is what the dashboard needle and both phone projections read.
+The other entries name the bus and sensor sources a car would use and are place holders for now.
+
 <p align="center">
   <img src="docs/media/gps/gps_hw.png" alt="GPS module info" width="42%" align="top" />
   &emsp;

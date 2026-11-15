@@ -591,6 +591,15 @@ fn gps() -> Node {
             )
             .icon("gpsBaudRate")
             .page(Label::new("settings.gpsBaudRate", "Baud Rate")),
+            Node::select(
+                Label::new("settings.gpsPositionRate", "Position Rate"),
+                "gpsPositionRateMs",
+                Vec::new(),
+            )
+            .icon("gpsPositionRate")
+            .options_from(OptionSource::GnssRates)
+            .display_value()
+            .page(Label::new("settings.gpsPositionRate", "Position Rate")),
             Node::route(
                 "info",
                 Label::new("settings.gpsInfo", "GPS Data"),

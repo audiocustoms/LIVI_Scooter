@@ -93,6 +93,10 @@ impl Core {
             .await
     }
 
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.config_file.path
+    }
+
     pub async fn set_config(&self, patch: &Value) -> Result<(), String> {
         let _one_at_a_time = self.config_writes.lock().await;
         let next = apply_patch(&self.hub.config(), patch)?;

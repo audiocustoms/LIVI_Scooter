@@ -15,13 +15,17 @@
 //! field by field, so `{ gps: { lat: 50 } }` keeps the last `lng`, every other field is replaced
 //! whole. LIVI sends the merged snapshot to every client as `telemetry:update`.
 //!
+//! LIVI fills one field itself: with `speedSource` on `gps`, the speed the GNSS receiver reports in
+//! its fix is published as `speedKph`, rounded to a tenth of a km/h and set to zero below walking
+//! pace and when the receiver stops answering. Every other source named in `speedSource` is a
+//! place holder for a bus or a sensor and leaves the field to whoever pushes it.
+//!
 //! Where each field goes, ✓ used, · not used, TODO the receiver takes it and LIVI does not send
 //! it yet. LIVI holds every field in its store and hands it to every Socket.IO client.
 //!
 //! | Field                               | LIVI | Android Auto | CarPlay Classic | CarPlay Ultra |
 //! |-------------------------------------|------|--------------|-----------------|---------------|
-//! | speedKph                            | ✓    | ✓            | TODO            | TODO          |
-//! | rpm                                 | ✓    | ✓            | ·               | ✓             |
+//! | speedKph                            | ✓    | ✓            | TODO            | TODO          |//! | rpm                                 | ✓    | ✓            | ·               | ✓             |
 //! | gear                                | ✓    | ✓            | ✓               | ✓             |
 //! | reverse                             | ✓    | ✓ (gear)     | ✓ (gear)        | ✓ (gear)      |
 //! | steeringDeg                         | ✓    | ·            | ·               | ·             |

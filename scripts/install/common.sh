@@ -491,6 +491,91 @@ livi_enable_i2c() {
   fi
 }
 
+# The header UART on GPIO 14/15 (pins 8 and 10), which the GNSS receiver talks on.
+#
+# Which port that ends up being depends on the board: on a Pi 3, 4 or Zero 2 W
+# Bluetooth keeps the PL011, so the header pins carry the mini UART and the device
+# is /dev/serial0. A Pi 5 has no Bluetooth on that UART and needs the uart0
+# overlay, which brings the PL011 out as /dev/ttyAMA0. Both want the serial
+# console off the port, otherwise kernel output lands in the receiver's sentences.
+# Everything takes effect on the next boot, the reboot the installer asks for.
+livi_uart_device() {
+  case "$1" in
+  Raspberry\ Pi\ 5*) echo "/dev/ttyAMA0" ;;
+  *) echo "/dev/serial0" ;;
+  esac
+}
+
+livi_enable_uart() {
+  local model overlay device cmdline
+  if [ ! -f "$LIVI_BOOT_CONFIG" ]; then
+    echo "→ No $LIVI_BOOT_CONFIG on this host, skipping the UART for the receiver"
+    return 0
+  fi
+  model="$(tr -d '\0' <"$LIVI_DEVICE_TREE/model" 2>/dev/null || true)"
+  overlay=enable_uart=1
+  case "$model" in
+  Raspberry\ Pi\ 5*) overlay=dtoverlay=uart0 ;;
+  esac
+  device="$(livi_uart_device "$model")"
+  echo "→ Enabling the UART on GPIO 14/15 for the GNSS receiver"
+  if grep -Eq "^[[:space:]]*${overlay}([[:space:]]|$)" "$LIVI_BOOT_CONFIG"; then
+    echo "   $overlay is already set in $LIVI_BOOT_CONFIG"
+  else
+    if [ ! -f "$LIVI_BOOT_CONFIG.livi-bak" ]; then
+      sudo cp -p "$LIVI_BOOT_CONFIG" "$LIVI_BOOT_CONFIG.livi-bak"
+    fi
+    # Under an explicit [all], because the file may end inside a board section.
+    printf '[all]\n%s\n' "$overlay" | sudo tee -a "$LIVI_BOOT_CONFIG" >/dev/null
+    echo "   added $overlay to $LIVI_BOOT_CONFIG"
+  fi
+
+  cmdline="$(dirname "$LIVI_BOOT_CONFIG")/cmdline.txt"
+  if [ -f "$cmdline" ] && grep -Eq 'console=(serial0|ttyS0|ttyAMA0),[0-9]+' "$cmdline"; then
+    if [ ! -f "$cmdline.livi-bak" ]; then
+      sudo cp -p "$cmdline" "$cmdline.livi-bak"
+    fi
+    sudo sed -i -E 's/console=(serial0|ttyS0|ttyAMA0),[0-9]+ ?//g' "$cmdline"
+    echo "   removed the serial console from $(basename "$cmdline")"
+  fi
+
+  livi_grant_dialout
+  livi_point_gps_at "$device"
+  echo "   the receiver is $device after the reboot"
+}
+
+# Reading the port needs the group the kernel gives it to.
+livi_grant_dialout() {
+  if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx dialout; then
+    return 0
+  fi
+  echo "   adding $USER to dialout"
+  sudo usermod -aG dialout "$USER"
+}
+
+# Points the app at the port the board has. Only the default and the ports this
+# script knows are touched, so a device the user typed in stays as it is.
+livi_point_gps_at() {
+  local device="$1" current cfg
+  command -v jq >/dev/null 2>&1 || return 0
+  if [ -r "$LIVI_APP_CONFIG" ]; then
+    current="$(livi_app_config_value gpsDevice "$device")"
+    [ "$current" = "$device" ] && return 0
+    case "$current" in
+    /dev/ttyAMA0 | /dev/serial0 | /dev/ttyS0) ;;
+    *) return 0 ;;
+    esac
+  else
+    # No config yet, so the app starts on its default, which fits a Pi 5 only.
+    [ "$device" = /dev/ttyAMA0 ] && return 0
+  fi
+  cfg="$(livi_app_config_jq '.gpsDevice = $d' --arg d "$device")" || return 0
+  [ -n "$cfg" ] || return 0
+  mkdir -p "$(dirname "$LIVI_APP_CONFIG")"
+  printf '%s\n' "$cfg" >"$LIVI_APP_CONFIG"
+  echo "   gpsDevice set to $device"
+}
+
 # Sets the regulatory domain as the driver loads, so hostapd does not wait for the kernel
 # to fetch it. Only once the user has chosen a country in LIVI.
 livi_write_regdom() {

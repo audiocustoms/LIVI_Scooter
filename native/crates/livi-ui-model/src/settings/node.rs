@@ -79,6 +79,8 @@ pub enum OptionSource {
     /// Marker positions on the speed scale, which follow the speed unit. The
     /// config path tells it which of the three marks it is building a list for.
     SpeedMarker(&'static str),
+    /// Position rates the connected receiver was measured to deliver.
+    GnssRates,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

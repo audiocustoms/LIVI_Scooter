@@ -55,6 +55,8 @@ fn open(main: &AppWindow, client: &Client, spec: &Secondary) -> Option<Secondary
     set_window_texts(&w);
     w.global::<DashState>()
         .set_clock(crate::clock::now_text().into());
+    w.global::<DashState>()
+        .set_clock_corner(crate::clock::corner_text().into());
     let window = w.window();
     match spec.bounds.as_ref().filter(|_| !in_compositor()) {
         Some(b) => {
@@ -165,9 +167,13 @@ pub fn relayout() {
 }
 
 pub fn tick_clock(text: &str) {
+    let corner = crate::clock::corner_text();
     OPEN.with_borrow(|open| {
-        open.iter()
-            .for_each(|o| o.window.global::<DashState>().set_clock(text.into()))
+        open.iter().for_each(|o| {
+            let state = o.window.global::<DashState>();
+            state.set_clock(text.into());
+            state.set_clock_corner(corner.clone().into());
+        })
     });
 }
 
