@@ -159,9 +159,10 @@ so use two resistors in series for the upper leg rather than one.
 6. Keep the board's milled isolation slot between the 12 V and 3.3 V halves. Do
    not run both sides through the same cable bundle if it can be avoided.
 
-If the only board that turns up inverts its output, the reader currently has no
-per-line way to say so — the levels would have to be flipped in hardware, or a
-`scooterIndicatorInvert` style flag added to the config.
+If the board inverts its output (active-low), set
+`scooterIndicatorActiveLow: true` in the LIVI config. That flips all four
+indicator inputs (left, right, high beam, spare) in software. Per-line polarity
+mixing is still not supported.
 
 ## Testing it without the control unit
 

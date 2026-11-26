@@ -4911,3 +4911,69 @@ Prüfe ob session log aktuell ist
 ## Assistant - 2026-11-25 14:21
 
 Der Log hing an einer Stelle: die letzte Assistant-Antwort (16:20) und deine neue Nachricht fehlen. Ich baue ihn neu aus dem Eventlog.
+## User - 2026-11-25 16:54
+
+Ich habe am INA228 den onboard Shunt wiederstand ausgelötet, dafür einen stecker der direkt zum externen shunt geht angelötet und verbunden.
+
+Erkläre mir wie ich den Rest anschließen muss.
+
+denk an das session log
+
+## Assistant - 2026-11-25 16:57
+
+Der Stecker an der Stelle von `R015` ist schon die halbe Miete: er greift genau die beiden Netze ab, die der Shunt vorher verbunden hat — das eine gehört zu `VIN−`, das andere zu `VIN+`, und beide sind elektrisch identisch mit den beiden Schraubklemmen. Damit sind die Messleitungen erledigt, solange sie an den **Messklemmen** des FL-2 hängen. Was noch fehlt: der dicke Strompfad, `VBUS` und die vier Leitungen zum Pi.
+
+## 1. Strompfad — außen am Board vorbei
+
+```
+Batterie −  ──[ FL-2 Klemme 1 ]────[ FL-2 Klemme 2 ]──  Last −   (= System-GND)
+```
+
+Batterie-Minus an die eine dicke Klemme, die andere dicke Klemme an die Lastmasse. Dieser Punkt ist ab jetzt System-GND: Pi, Modul und Last hängen alle daran. Über deinen Stecker und über das Board fließt **kein** Laststrom — die R015-Pads sitzen in den Kupferflächen, 100 A gehören auf die dicken Klemmen des FL-2. An die Schraubklemmen des Moduls kommt nichts mehr.
+
+## 2. Welche Stecker-Seite gehört wohin
+
+| Stecker-Pin mit Durchgang zu | Netz | gehört an |
+| --- | --- | --- |
+| Schraubklemme `Vin−` (in der Skizze links) | `VIN−` | **Batterieseite** des FL-2 |
+| Schraubklemme `Vin+` (rechts) | `VIN+` | **Lastseite** des FL-2 |
+
+Messen statt raten: 0 Ω vom Pin zur jeweiligen Klemme, offen zur anderen. Die Richtung ist nicht kosmetisch — bei Entladung ist die Lastseite um `I·R` positiver, nur so kommt ein positiver Strom heraus und der Coulomb-Zähler läuft in die richtige Richtung. Vertauscht heißt: dauerhaft 100 %.
+
+## 3. Die restlichen Pins
+
+| Modul | wohin |
+| --- | --- |
+| `VBUS` | Batterie **Plus** (bis 85 V gegen Modul-GND) |
+| `VIN` | Pi Pin 1, 3V3 — **Logikversorgung, nie Packspannung** |
+| `GND` | Pi Pin 6, GND |
+| `SDA` | Pi Pin 3, GPIO2 |
+| `SCL` | Pi Pin 5, GPIO3 |
+| `ALRT` | frei, der Treiber pollt |
+
+Der `VBUS`-Jumper auf der Rückseite bleibt **offen** (Werkseinstellung); geschlossen wäre das die High-Side-Variante. Wichtig zu `GND`: es muss dasselbe Netz sein wie die Lastseite des Shunts. Beim Banktest mit eigenem Pi-Netzteil also Pi-GND und Lastmasse verbinden, sonst hängt `VBUS` in der Luft und der Ladezustand bleibt leer.
+
+## 4. Prüfliste, spannungslos, vor dem ersten Einschalten
+
+| Messung | Erwartung |
+| --- | --- |
+| Stecker-Pin A ↔ Schraubklemme `Vin−` | 0 Ω |
+| Stecker-Pin A ↔ Schraubklemme `Vin+` | offen |
+| Stecker-Pin A ↔ Stecker-Pin B | **offen** — sonst ist Lötzinn zwischen den Pads und damit ein Shunt unbekannten Werts parallel zum FL-2 |
+| `VBUS` ↔ `VIN+` und ↔ `VIN−` | offen |
+| `VIN` ↔ `VIN+` / `VBUS` | offen |
+
+Praktisch: die beiden Messadern verdrillen, kurz halten und nicht ins Bündel der dicken Kabel legen. Bei 0,75 mΩ sind 100 A nur 75 mV — eine lose Schraube an der Messklemme ist da schnell 20 % Fehler.
+
+## 5. Software
+
+Am Treiber ist nichts zu tun: er schreibt nur `SHUNT_CAL` (1875 für deinen FL-2) und lässt den ADC im weiten Bereich ±163,84 mV, die 75 mV passen also. In der Config:
+
+- `scooterBatterySensor: true`
+- `scooterShuntMilliohm: 0.75`, `scooterShuntMaxCurrentA: 100` — stehen schon so
+- `scooterBatteryVoltage` / `scooterBatteryCapacityAh` auf den echten Pack (60 V / 30 Ah, fürs Banknetz 12 V / 4,6 Ah)
+- `scooterVbusScale: 1.0` — auf dem Pi steht noch `0.6653` aus der Fehldiagnose mit dem falschen LSB ([TODO.md](/c:/Users/camog/Documents/GitHub/LIVI_Scooter/scripts/dev/TODO.md), Punkt 2b)
+
+Kontrolle: `i2cdetect -y 1` muss `0x40` zeigen, `0x3E`/`0x3F` lesen `0x5449`/`0x2281`.
+
+Die neue Stecker-Variante steht jetzt auch in [livi-ina228/README.md](/c:/Users/camog/Documents/GitHub/LIVI_Scooter/native/crates/livi-ina228/README.md) unter *Low-side wiring*, und der Chat ist im [Session-Log](/c:/Users/camog/Documents/GitHub/LIVI_Scooter/scripts/dev/SESSION-LOG.md) nachgetragen.

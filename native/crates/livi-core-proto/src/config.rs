@@ -150,6 +150,10 @@ pub struct Config {
     /// Wired and reserved for a later use, read but not published.
     #[serde(default = "default_indicator_spare")]
     pub scooter_indicator_spare_gpio: i32,
+    /// Some optocoupler boards sink the GPIO line when 12 V is present.
+    /// Set this to true for those active-low outputs.
+    #[serde(default)]
+    pub scooter_indicator_active_low: bool,
     /// Read the pack from an INA228 over I²C. Stays off until the chip is wired,
     /// so a scooter without one is unaffected.
     #[serde(default)]
@@ -664,6 +668,7 @@ pub fn defaults() -> Config {
         scooter_indicator_right_gpio: default_indicator_right(),
         scooter_high_beam_gpio: default_high_beam(),
         scooter_indicator_spare_gpio: default_indicator_spare(),
+        scooter_indicator_active_low: false,
         scooter_battery_sensor: false,
         speed_unit: SpeedUnit::Kmh,
         temperature_unit: TemperatureUnit::Celsius,

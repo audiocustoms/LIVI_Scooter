@@ -79,6 +79,21 @@ Take the sense terminals of the shunt for steps 3 and 4, not the thick current
 terminals. At 0.75 mΩ a few tenths of a milliohm of screw contact are already
 20 % error.
 
+### A connector on the `R015` pads
+
+Soldering a two-pin connector where `R015` sat is electrically the same pair of
+nets as the header: one pad still belongs to `VIN-`, the other to `VIN+`, and
+both are also the two screw terminals. Which pad is which is not printed on the
+board, so measure it — 0 Ω from each pad to exactly one screw terminal. The
+`VIN-` net is the pack side, the `VIN+` net the load side.
+
+Only the sense pair goes there. The pads sit inside the current pours, so a
+thick cable on that connector would push the pack current through a 2512 pad and
+through the board's copper instead of through the external shunt. And check that
+the two pads are open against each other before switching on — solder left
+between them is a shunt of unknown value in parallel with the real one. Nothing
+else needs to be attached to the screw terminals afterwards.
+
 Point the shunt the right way round: `VIN-` to the pack side and `VIN+` to the
 load side. Only that way does a discharging pack read a positive current, which
 is what [`Reading::soc_percent`](src/lib.rs) counts against.

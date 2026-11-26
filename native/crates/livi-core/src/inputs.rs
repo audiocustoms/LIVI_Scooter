@@ -73,6 +73,18 @@ pub fn decode(bits: u64) -> Lines {
     }
 }
 
+pub fn level(lines: Lines, active_low: bool) -> Lines {
+    if !active_low {
+        return lines;
+    }
+    Lines {
+        left: !lines.left,
+        right: !lines.right,
+        high_beam: !lines.high_beam,
+        spare: !lines.spare,
+    }
+}
+
 pub async fn run(
     core: std::sync::Arc<crate::server::Core>,
     inside: tokio::sync::mpsc::UnboundedSender<Value>,
@@ -208,6 +220,7 @@ mod linux {
                     continue;
                 }
             };
+            let now = level(now, core.hub.config().scooter_indicator_active_low);
             if last == Some(now) {
                 continue;
             }
@@ -265,6 +278,29 @@ mod tests {
         assert_eq!(decode(0b0111), lines(true, true, true));
         // Bits above the four claimed lines belong to nothing.
         assert_eq!(decode(0b1111_0000), lines(false, false, false));
+    }
+
+    #[test]
+    fn active_low_levels_can_be_flipped() {
+        assert_eq!(level(lines(true, false, false), false), lines(true, false, false));
+        assert_eq!(level(lines(true, false, false), true), lines(false, true, true));
+        assert_eq!(
+            level(
+                Lines {
+                    left: false,
+                    right: false,
+                    high_beam: false,
+                    spare: true,
+                },
+                true
+            ),
+            Lines {
+                left: true,
+                right: true,
+                high_beam: true,
+                spare: false,
+            }
+        );
     }
 
     #[test]
